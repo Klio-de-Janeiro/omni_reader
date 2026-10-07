@@ -1,0 +1,17 @@
+{
+  "version": "0.3.0-laptop-inline-modes",
+  "date": "2026-10-04",
+  "unit_tests_passed": 43,
+  "javascript_build": "passed",
+  "javascript_syntax_files": 34,
+  "native_assets": 266,
+  "native_asset_sync": "passed_byte_identical",
+  "independent_readers": "passed",
+  "rich_export": "passed",
+  "mode_switch_export": "passed",
+  "git_sources": 0,
+  "image_pixel_export": "not_run_requires_browser",
+  "windows_runtime": "not_run",
+  "android_build": "not_run",
+  "browser_e2e": "not_run_chromium_SIGSEGV"
+}

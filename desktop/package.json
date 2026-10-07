@@ -1,0 +1,79 @@
+{
+  "name": "omni-reader-desktop",
+  "version": "0.3.0",
+  "description": "Local interactive file viewer",
+  "author": "Klio",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "42.1.0",
+    "electron-builder": "26.0.12"
+  },
+  "overrides": {
+    "@electron/rebuild@3.7.0": {
+      "@electron/node-gyp": "10.2.0-electron.2"
+    }
+  },
+  "allowScripts": {
+    "electron-winstaller@5.4.0": true
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "build": {
+    "appId": "dev.klio.omni",
+    "productName": "Omni Reader",
+    "electronDist": "node_modules/electron/dist",
+    "artifactName": "Omni-Reader-${version}-Windows-Setup.${ext}",
+    "directories": {
+      "output": "../release/windows"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "package.json",
+      "www/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "../dist/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "pdf",
+          "docx",
+          "pptx",
+          "xlsx",
+          "csv",
+          "wav",
+          "jpg",
+          "jpeg",
+          "png",
+          "md",
+          "tex",
+          "ipynb",
+          "json",
+          "yaml",
+          "yml",
+          "js",
+          "env",
+          "txt"
+        ],
+        "name": "Omni supported files",
+        "role": "Viewer"
+      }
+    ]
+  }
+}

@@ -1,0 +1,120 @@
+import { parseAsync, renderDocument } from 'docx-preview';
+import { PptxViewer, RECOMMENDED_ZIP_LIMITS } from '@aiden0z/pptx-renderer';
+import { createInlineEditor } from './office-inline.js';
+import { isFullscreenShortcut, isThemeShortcut, zoomShortcut } from '../dist/shortcuts.js';
+import { officeModes } from './office-modes.js';
+import { wheelZoomDelta, captureZoomAnchor, bindTouchPinch } from '../dist/gestures.js';
+let viewer, token, zoom=1,docWidth=800,docScale,modes,editor,renderBookmark;
+let queryState='',hitIndex=-1, action=Promise.resolve();
+const container=document.querySelector('#office');
+const send=data=>parent.postMessage({...data,token},'*');
+function fitDocument(){
+  if(!docScale)return;
+  const viewportWidth=document.documentElement.clientWidth || innerWidth;
+  const factor=Math.max(0.1,(viewportWidth-32)/docWidth)*zoom;
+  docScale.style.transform='scale('+factor+')';docScale.parentElement.style.height=(docScale.scrollHeight*factor)+'px';docScale.parentElement.style.width=(docWidth*factor)+'px';
+}
+async function openDocument(data){
+  token=data.token;
+  if(data.blocks)editor=createInlineEditor(data.blocks,message=>{
+    if(message.type==='edit-selection' && message.id){
+      const el=[...container.querySelectorAll('.omni-edit-content')].find(n=>n.dataset.block===message.id),section=el?.closest('section.docx');
+      if(section)message.page=Number(section.dataset.page);
+      modes?.selected(message.page);
+    }
+    send(message);
+  });
+  modes=officeModes({container,getViewer:()=>viewer,editor,initialMode:data.viewMode,onPage:page=>send({type:'page-change',page}),fitDocument});
+  if(data.ext==='pptx'){
+    container.className='pptx';
+    viewer=new PptxViewer(container,{
+      fitMode:'contain',lazySlides:true,lazyMedia:true,pdfjs:false,
+      zipLimits:{...RECOMMENDED_ZIP_LIMITS,maxEntries:3000,maxTotalUncompressedBytes:128*1024*1024},
+      onSlideChange:index=>modes.slideChanged(index),
+      onSlideRendered:(index,el)=>editor?.mountPptx(index,el),
+      onSlideUnmounted:index=>editor?.releasePptx(index),
+      onRenderStart:()=>{renderBookmark=editor?.bookmark();},
+      onRenderComplete:()=>{editor?.restore(renderBookmark);},
+      onSlideError:()=>send({type:'warning',message:'Не удалось отобразить слайд.'}),
+      onNodeError:()=>send({type:'warning',message:'Некоторые объекты не удалось отобразить.'})
+    });
+    await viewer.open(data.buffer,{renderMode:modes.mode==='scroll'?'list':'slide',listOptions:modes.listOptions});
+    if(!viewer.slideCount)throw new Error('В презентации нет слайдов.');
+    send({type:'loaded',pages:viewer.slideCount});
+  }else{
+    const outer=document.createElement('div');outer.className='doc-page-stack';docScale=document.createElement('div');docScale.id='doc-scale';outer.append(docScale);container.append(outer);
+    const options={breakPages:true,ignoreLastRenderedPageBreak:false,renderAltChunks:false,renderComments:false,renderChanges:false,useBase64URL:true,ignoreFonts:true};
+    const doc=await parseAsync(data.buffer,options);editor?.annotateDocx(doc);docScale.replaceChildren(...await renderDocument(doc,options));editor?.mountDocx(docScale);
+    for(const link of container.querySelectorAll('a'))link.removeAttribute('href');
+    const sections=[...container.querySelectorAll('section.docx')];if(!sections.length)throw new Error('В документе нет страниц.');
+    docWidth=Math.max(...sections.map(s=>s.getBoundingClientRect().width || 800));docScale.style.width=docWidth+'px';modes.bindDocx();
+    send({type:'loaded',pages:sections.length});
+  }
+}
+async function message(data){
+  if(data.type==='open' && !token){await openDocument(data);return;}
+  if(!token || data.token!==token)return;
+  if(data.type==='theme' && /^#[\da-f]{6}$/i.test(data.theme?.background)){
+    document.documentElement.style.background=data.theme.background;document.body.style.background=data.theme.background;
+    document.documentElement.style.colorScheme=data.theme.dark?'dark':'light';
+  }
+  if(data.type==='page'){await modes.go(data.page);send({type:'reply',requestId:data.requestId,result:modes.page});}
+  if(data.type==='view-mode'){await modes.setMode(data.mode);send({type:'reply',requestId:data.requestId,result:modes.mode});}
+  if(data.type==='zoom'){
+    const restore=captureZoomAnchor(()=>[...container.querySelectorAll('section.docx,[data-slide-index]')],window,data.anchor);
+    await modes.zoom(data.zoom,async value=>{zoom=value;if(viewer)await viewer.setZoom(value*100);else fitDocument();});
+    restore();send({type:'reply',requestId:data.requestId,result:zoom});
+  }
+  if(data.type==='flush'){editor?.flush();send({type:'reply',requestId:data.requestId,result:true});}
+  if(data.type.startsWith('edit-')){
+    if(data.type==='edit-command' && data.command==='focus'){
+      const el=[...container.querySelectorAll('.omni-edit-content')].find(n=>n.dataset.block===data.id),section=el?.closest('section.docx');
+      if(section)await modes.go(Number(section.dataset.page));
+    }
+    editor?.message(data);
+  }
+  if(data.type==='find'){
+    if(queryState!==data.query){queryState=data.query;hitIndex=-1;}
+    let result=null;
+    if(viewer){
+      const hits=viewer.searchText(data.query);if(hits.length){const hit=hits[(++hitIndex)%hits.length];await modes.go(hit.slideIndex+1);result={page:hit.slideIndex+1,message:'Совпадение '+((hitIndex%hits.length)+1)+' / '+hits.length};}
+    }else{
+      const hits=[],walker=document.createTreeWalker(container,NodeFilter.SHOW_TEXT);let n;const query=data.query.toLocaleLowerCase();
+      while(n=walker.nextNode()){if(n.parentElement.closest('style,script'))continue;let at=n.textContent.toLocaleLowerCase().indexOf(query);while(at>=0){hits.push({n,at});at=n.textContent.toLocaleLowerCase().indexOf(query,at+query.length);}}
+      if(hits.length){const hit=hits[(++hitIndex)%hits.length],page=Number(hit.n.parentElement.closest('section.docx')?.dataset.page || 1);await modes.go(page);const r=document.createRange();r.setStart(hit.n,hit.at);r.setEnd(hit.n,hit.at+data.query.length);getSelection().removeAllRanges();getSelection().addRange(r);hit.n.parentElement.scrollIntoView({block:'center'});result={page,message:'Совпадение '+((hitIndex%hits.length)+1)+' / '+hits.length};}
+    }
+    send({type:'reply',requestId:data.requestId,result});
+  }
+}
+addEventListener('message',event=>{
+  if(event.source!==parent || !event.data || typeof event.data!=='object')return;
+  const data=event.data;action=action.then(()=>message(data)).catch(error=>send({type:'error',requestId:data.requestId,message:error.message || 'Ошибка документа.'}));
+});
+addEventListener('resize',fitDocument);
+addEventListener('wheel',event=>{
+  const delta=wheelZoomDelta(event);
+  if(delta===null || !token)return;
+  event.preventDefault();event.stopPropagation();
+  send({type:'zoom-gesture',delta,anchor:{x:event.clientX,y:event.clientY}});
+},{passive:false,capture:true});
+const disposeTouch=bindTouchPinch(window,(delta,anchor)=>{
+  if(token)send({type:'zoom-gesture',delta,anchor});
+});
+addEventListener('pagehide',()=>{disposeTouch();modes?.dispose();},{once:true});
+document.addEventListener('selectionchange',()=>{const text=getSelection()?.toString() || '';if(text)send({type:'selection',text});});
+document.addEventListener('keydown',event=>{
+  if(isThemeShortcut(event)){event.preventDefault();event.stopImmediatePropagation();if(!event.repeat)send({type:'shell-shortcut',command:'theme'});return;}
+  const scaleCommand=zoomShortcut(event);
+  if(scaleCommand){event.preventDefault();event.stopImmediatePropagation();send({type:'shell-shortcut',command:scaleCommand});return;}
+  if(isFullscreenShortcut(event)){event.preventDefault();event.stopImmediatePropagation();if(!event.repeat)send({type:'shell-shortcut',command:'focus'});return;}
+  if(event.key==='Escape'){event.preventDefault();send({type:'shell-shortcut',command:'escape'});}
+  if(event.defaultPrevented || event.ctrlKey || event.metaKey)return;
+  const typing=event.target.closest?.('input,textarea,select,[contenteditable="true"]');
+  let delta=0;
+  if(event.altKey && event.key==='ArrowLeft' || !typing && event.key==='PageUp')delta=-1;
+  if(event.altKey && event.key==='ArrowRight' || !typing && event.key==='PageDown')delta=1;
+  if(delta){event.preventDefault();send({type:'shell-shortcut',command:delta>0?'next':'previous'});}
+
+},true);
+addEventListener('click',event=>{if(event.target.closest('a'))event.preventDefault();},true);
+send({type:'ready'});

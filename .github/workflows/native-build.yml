@@ -1,0 +1,49 @@
+name: Native installers
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - run: npm ci
+      - run: npm run build && npm test && npm run native:sync
+      - run: gradle -p android assembleDebug --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Omni-Reader-Android-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: npm run native:sync
+      - run: npm --prefix desktop install
+      - run: npm --prefix desktop run dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Omni-Reader-Windows-Setup
+          path: release/windows/*.exe
+          if-no-files-found: error

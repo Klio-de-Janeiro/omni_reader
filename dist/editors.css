@@ -1,0 +1,49 @@
+.editor-panel{display:flex;flex-direction:column;gap:16px;min-width:0}.editor-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;position:sticky;top:-20px;background:#041020f5;padding:12px;border:1px solid #195995;border-radius:16px;z-index:3;box-shadow:0 0 24px #008cff1a}.editor-panel button{font:inherit;font-size:14px;padding:11px 15px;border:1px solid #2368a6;border-radius:12px;background:#082340;color:#b6dcff;cursor:pointer}.editor-panel button.primary{color:white;background:linear-gradient(120deg,#075bff,#009bff)}.editor-panel button:disabled{opacity:.4;cursor:default}.editor-status{color:#74bfff;font-size:12px}.editor-body{display:flex;flex-direction:column;gap:12px;min-width:0}.editor-body>button{align-self:flex-start}.editor-fields{display:flex;flex-wrap:wrap;gap:12px;align-items:end}.editor-body label{display:flex;flex-direction:column;gap:7px;color:#9ec4ed;font-size:13px;min-width:0}.editor-fields label{flex:1;min-width:120px;max-width:350px}.editor-panel input,.editor-panel textarea,.editor-panel select{font:inherit;font-size:15px;color:#e0efff;background:#020b18;border:1px solid #255481;border-radius:11px;padding:12px;min-width:0;width:100%;box-sizing:border-box}.editor-panel select{max-width:100%;text-overflow:ellipsis;margin:0}.editor-panel textarea{resize:vertical;min-height:85px;line-height:1.6}.editor-panel input:focus,.editor-panel textarea:focus,.editor-panel select:focus{outline:2px solid #058dff;outline-offset:2px}.editor-note{margin:0;color:#8caed3;font-size:13px;line-height:1.6}.editor-grid{min-height:240px;max-height:40vh}.image-edit-preview{max-width:100%;height:auto;align-self:center;background:repeating-conic-gradient(#163046 0% 25%,#081423 0% 50%) 50% / 20px 20px;border-radius:12px}.editor-preview-area{border:1px solid #215284;border-radius:16px;padding:10px}.editor-preview-area .editor-fields{margin-bottom:10px}.editor-preview{height:60vh;min-height:300px}.editor-mode{height:72dvh;overflow:auto}#discard-dialog .dialog-actions{display:flex;gap:12px;flex-wrap:wrap}#discard-dialog button{padding:12px;border-radius:12px;border:1px solid #24659c;color:#bce5ff;background:#092849}@media(max-width:720px){.editor-mode{height:70dvh;padding:8px}.editor-bar{top:-8px;padding:8px;gap:6px;border-radius:14px}.editor-panel button{font-size:12px;padding:10px}.editor-fields{gap:10px}.editor-fields label{min-width:110px}.editor-panel input,.editor-panel textarea,.editor-panel select{font-size:16px}.editor-status{width:100%}.editor-preview{height:54dvh}.editor-grid{max-height:35dvh}}
+.view-mode-control{display:flex;gap:8px;align-items:center;color:#9bcafa;font-size:13px}.view-mode-control select{border:1px solid #246ba7;border-radius:10px;background:#071a2d;color:#d7ecff;font:inherit;padding:9px}
+.pdf-document{overflow-anchor:none;scrollbar-gutter:stable}.pdf-paper{margin:0 auto 20px;position:relative;flex:none;background:#fff}.pdf-paper[hidden]{display:none!important}.pdf-paper[aria-busy="true"]::before{content:"Страница " attr(data-page);position:absolute;top:16px;left:16px;color:#6b7690;font-size:13px}.pdf-paper canvas{box-shadow:none!important;margin:0!important}
+body.files-hidden .app{grid-template-columns:minmax(0,1fr)}body.files-hidden .sidebar{display:none}
+.reader-heading>button:not(.icon-button){border:1px solid #246ba7;border-radius:10px;background:#071a2d;color:#d7ecff;padding:10px;font:inherit;font-size:12px}
+body.focus-mode main{padding:12px!important;height:100dvh}body.focus-mode .topbar,body.focus-mode main>footer,body.focus-mode #office-note{display:none}body.focus-mode .reader{display:flex;flex-direction:column;min-height:0;max-height:calc(100dvh - 24px)}body.focus-mode .reader-heading{padding:12px 16px}body.focus-mode .viewer{flex:1;min-height:0;height:auto}body.focus-mode .editor-mode{overflow:hidden}
+.office-editor{height:100%;gap:10px;min-height:0}.office-editor .editor-bar{position:relative;top:0;flex:none;gap:6px;padding:9px}.office-editor .editor-bar button{padding:9px 11px}.office-editor .editor-bar select{max-width:165px;width:auto;padding:9px}.office-editor .editor-bar input{width:58px;padding:9px}.office-edit-canvas{flex:1;min-height:280px;height:52dvh;padding:0!important;overflow:hidden}.office-edit-canvas iframe{height:100%;min-height:0}.symbol-palette{display:flex;gap:5px;flex-wrap:wrap;padding:8px;border:1px solid #246ba7;border-radius:10px}.symbol-palette[hidden]{display:none}.symbol-palette button{min-width:35px;padding:8px}
+@media(max-width:720px){.reader-heading{flex-wrap:wrap}.reader-heading>div{min-width:calc(100% - 70px)}body.files-hidden .app{display:block}body.focus-mode main{padding:6px!important}.office-edit-canvas{min-height:180px}.office-editor .editor-bar button{padding:8px}.office-editor .editor-bar select{max-width:135px}.office-editor .editor-note{font-size:11px}}
+
+/* The PDF stays visible while page operations are applied. */
+.pdf-editor{height:100%;min-height:0;gap:10px}
+.pdf-editor .editor-bar{position:relative;top:0;flex:none;padding:9px;gap:6px}
+.pdf-editor .editor-bar button{padding:9px 11px}
+.pdf-editor .editor-bar input{width:58px;padding:9px}
+.pdf-editor .editor-bar select{width:auto;max-width:165px;padding:9px}
+.pdf-edit-canvas{flex:1;min-height:240px;height:52dvh;overflow:auto}
+.editor-mode:has(>.pdf-editor),.editor-mode:has(>.office-editor){overflow:hidden}
+.reader:has(>.editor-mode)>.toolbar{display:none}
+
+/* One exit control and the file, with no application or editor chrome. */
+#focus-exit{position:fixed;top:max(12px,env(safe-area-inset-top));right:max(20px,env(safe-area-inset-right));z-index:1000;border:1px solid #287cbe;border-radius:12px;padding:10px 15px;background:#06172eee;color:#e6f4ff;font-size:14px;box-shadow:0 2px 14px #0008}
+body.focus-mode{overflow:hidden}
+body.focus-mode .app{display:block;height:100dvh;min-height:0}
+body.focus-mode main{height:100dvh;padding:0!important;overflow:hidden}
+body.focus-mode .sidebar,body.focus-mode .topbar,body.focus-mode footer,
+body.focus-mode #messages,body.focus-mode .reader-heading,
+body.focus-mode .reader>.toolbar,body.focus-mode #text-tools,
+body.focus-mode #office-note,body.focus-mode .editor-bar,
+body.focus-mode .editor-note,body.focus-mode .symbol-palette{display:none!important}
+body.focus-mode .reader{border:0;border-radius:0;box-shadow:none;height:100dvh;max-height:100dvh;min-height:0;margin:0;flex:1}
+body.focus-mode #viewer{height:100%;min-height:0;flex:1}
+body.focus-mode #viewer.editor-mode{padding:0;overflow:hidden}
+body.focus-mode .editor-panel{height:100%;min-height:0;gap:0}
+body.focus-mode .office-edit-canvas,body.focus-mode .pdf-edit-canvas{height:100%;min-height:0;flex:1}
+body.focus-mode .viewer iframe{height:100%;min-height:0}
+body.focus-mode .editor-body>label,body.focus-mode .editor-body>.editor-fields,
+body.focus-mode .editor-body>button,body.focus-mode .editor-preview-area>.editor-fields{display:none!important}
+body.focus-mode .editor-grid{height:100%;max-height:none}
+body.focus-mode .editor-body{flex:1;min-height:0;overflow:auto}
+body.focus-mode .editor-preview-area{border:0;border-radius:0;padding:0}
+body.focus-mode .editor-preview-area:not([hidden]){flex:1;min-height:0}
+body.focus-mode .editor-preview{height:100%;min-height:0}
+body.focus-mode .editor-panel:has(.editor-preview-area:not([hidden]))>.editor-body{display:none}
+body.focus-mode .table-tools,body.focus-mode .table-nav,
+body.focus-mode .cell-detail,body.focus-mode .table-note,
+body.focus-mode .audio-mark,body.focus-mode .audio-panel>label,
+body.focus-mode .seek-bar{display:none!important}
+body.focus-mode .table-panel{height:100%;gap:0}
+body.focus-mode .table-panel>.table-scroll{flex:1;max-height:none;min-height:0}

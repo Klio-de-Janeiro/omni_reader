@@ -1,0 +1,15 @@
+node_modules/
+*.zip
+.sites-runtime/
+test-results/
+
+.tools/
+release/
+android/.gradle/
+android/local.properties
+android/**/build/
+android/app/src/main/assets/www/
+desktop/www/
+desktop/node_modules/
+*.keystore
+*.jks

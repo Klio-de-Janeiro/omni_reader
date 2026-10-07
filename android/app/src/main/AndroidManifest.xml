@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:allowBackup="false" android:label="Omni Reader" android:icon="@drawable/ic_launcher" android:theme="@style/AppTheme" android:usesCleartextTraffic="false">
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop" android:configChanges="orientation|screenSize|keyboardHidden|uiMode" android:windowSoftInputMode="adjustResize">
+            <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/>
+                <data android:scheme="content"/><data android:mimeType="application/pdf"/><data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document"/><data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.presentation"/><data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"/><data android:mimeType="text/csv"/><data android:mimeType="text/markdown"/><data android:mimeType="text/x-markdown"/><data android:mimeType="text/plain"/><data android:mimeType="application/json"/><data android:mimeType="application/x-ipynb+json"/><data android:mimeType="application/yaml"/><data android:mimeType="application/x-yaml"/><data android:mimeType="text/yaml"/><data android:mimeType="text/x-yaml"/><data android:mimeType="application/javascript"/><data android:mimeType="text/javascript"/><data android:mimeType="application/octet-stream"/><data android:mimeType="application/x-tex"/><data android:mimeType="text/x-tex"/><data android:mimeType="application/x-latex"/><data android:mimeType="audio/wav"/><data android:mimeType="audio/x-wav"/><data android:mimeType="image/jpeg"/><data android:mimeType="image/png"/>
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
