@@ -13,6 +13,7 @@ import { openNotebookEditor } from '../notebooks.js';
 import { TEXT_EXTENSIONS } from '../validation.js';
 import { openImageUI } from './image-ui.js';
 import { editingShortcut } from '../shortcuts.js';
+import { withReadMode } from './read-mode.js';
 
 const node = (tag, text, cls) => { const el = document.createElement(tag); if (text != null) el.textContent = text; if (cls) el.className = cls; return el; };
 const button = text => { const el = node('button', text); el.type = 'button'; return el; };
@@ -20,7 +21,7 @@ const field = (title, control) => { const label = node('label', title); control.
 const input = (title, type = 'text') => { const el = node('input'); el.type = type; el.setAttribute('aria-label', title); return el; };
 
 /** Mount one editor and expose an explicit export, dirty state and disposal contract. */
-export async function openEditor(record, root, { onSave, onClose, onError, onDirty, signal, viewMode, onViewMode, onShellShortcut, initialPage = 1, initialZoom = 1 }) {
+async function openEditorUI(record, root, { onSave, onClose, onError, onDirty, signal, viewMode, onViewMode, onShellShortcut, initialPage = 1, initialZoom = 1 }) {
   if (record.ext === 'md') return openMarkupEditor(record, root, { onSave, onClose, onError, onDirty, signal, initialZoom });
   if (record.ext === 'ipynb') return openNotebookEditor(record, root, { onSave, onClose, onError, onDirty, signal, initialZoom });
   if (TEXT_EXTENSIONS.includes(record.ext)) return openTextEditor(record, root, { onSave, onClose, onError, onDirty, signal, initialZoom });
@@ -35,7 +36,7 @@ export async function openEditor(record, root, { onSave, onClose, onError, onDir
   if (['jpg', 'jpeg', 'png'].includes(ext)) return openImageUI(model,record,root,{signal,onSave,onClose,onError,onDirty,initialZoom});
   if (ext === 'docx' || ext === 'pptx') return openOfficeUI(model,record,root,{signal,onSave,onClose,onError,onDirty,viewMode,onViewMode,onShellShortcut,initialPage,initialZoom});
   if (ext === 'pdf') return openPdfUI(model,record,root,{signal,onSave,onClose,onError,onDirty,viewMode,onViewMode,initialPage,initialZoom});
-  let flush = () => {}, pending = () => false, render = () => {}, adjustZoom = () => {}, busy = false, previewController, disposed = false;
+  let flush = () => {}, pending = () => false, render = () => {}, adjustZoom = () => {}, busy = false, previewController, disposed = false, committingInline = false;
   const panel = node('div', null, 'editor-panel'), bar = node('div', null, 'editor-bar');
   const undo = button('Отменить'), redo = button('Повторить'), save = button('Сохранить копию'), close = button('К просмотру'), preview = button('Предпросмотр');
   save.className = 'primary'; const status = node('span', '', 'editor-status'); status.setAttribute('role', 'status');
@@ -43,7 +44,7 @@ export async function openEditor(record, root, { onSave, onClose, onError, onDir
   const body = node('div', null, 'editor-body'), previewArea = node('div', null, 'editor-preview-area'); previewArea.hidden = true;
   const note = node('p', 'Изменения сохраняются в новый файл. Отмена и повтор: до 100 действий.', 'editor-note');
   panel.append(bar, note, body, previewArea); root.replaceChildren(panel);
-  const guarded = action => async () => { if (busy) return; try { await action(); } catch (error) { onError(error); } };
+  const guarded = action => async (...args) => { if (busy) return; try { await action(...args); } catch (error) { onError(error); } };
   function update() {
     if (disposed) return;
     const dirty = model.history.dirty || pending();
@@ -85,8 +86,39 @@ export async function openEditor(record, root, { onSave, onClose, onError, onDir
         for (let col = firstCol; col < Math.min(firstCol + 10, ext === 'csv' ? 512 : 16384); col++) {
           const cellAddress = columnName(col) + (row + 1), td = node('td', model.getCell(sheetIndex, cellAddress).value);
           td.dataset.address = cellAddress; td.tabIndex = 0; td.classList.toggle('active-cell', cellAddress === address);
-          td.onclick = guarded(() => { flush(); address = cellAddress; render(); update(); });
-          td.onkeydown = event => { if (event.key === 'Enter') td.click(); }; tr.append(td);
+          td.onclick = guarded(event => {
+            if (ext === 'csv' && event?.target.closest('.csv-cell-input')) return;
+            flush(); address = cellAddress; render(); update();
+            if (ext === 'csv') { const editor = grid.querySelector('.csv-cell-input'); editor?.focus({ preventScroll: true }); editor?.select(); }
+          });
+          td.onkeydown = event => { if (event.key === 'Enter' && event.target === td) { event.preventDefault(); td.click(); } };
+          if (ext === 'csv' && cellAddress === address) {
+            const editor = node('textarea', null, 'csv-cell-input'); editor.rows = 1; editor.value = current.value; editor.maxLength = 32767;
+            editor.setAttribute('aria-label', `Значение ячейки ${cellAddress}`); editor.spellcheck = false;
+            editor.oninput = () => { value.value = editor.value; update(); };
+            editor.onblur = () => {
+              if (disposed || busy) return;
+              // Do not replace the clicked table before the next cell receives its click.
+              committingInline = true;
+              try { flush(); } catch (error) { onError(error); }
+              finally { committingInline = false; update(); }
+            };
+            editor.onkeydown = event => {
+              if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); value.value = model.getCell(sheetIndex, address).value; render(); update(); }
+              else if (event.key === 'Tab' || event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+                event.preventDefault(); event.stopPropagation();
+                void guarded(() => {
+                  flush(); const pos = parseAddress(address);
+                  if (event.key === 'Tab') pos.col = Math.max(0, Math.min(511, pos.col + (event.shiftKey ? -1 : 1)));
+                  else pos.row = Math.min(99999, pos.row + 1);
+                  address = columnName(pos.col) + (pos.row + 1); render(); update();
+                  const next = grid.querySelector('.csv-cell-input'); next?.focus({ preventScroll: true }); next?.select();
+                })();
+              }
+            };
+            td.replaceChildren(editor);
+          }
+          tr.append(td);
         }
         table.append(tr);
       }
@@ -105,7 +137,7 @@ export async function openEditor(record, root, { onSave, onClose, onError, onDir
     body.append(apply, node('p', `PCM 16-bit · ${model.wav.channels} канал(а) · ${model.wav.rate} Гц · ${model.wav.duration.toFixed(3)} с. Диапазон задаётся по исходной записи. При усилении пики ограничиваются; метаданные WAV не переносятся.`, 'editor-note'));
     apply.onclick = guarded(() => { flush(); render(); update(); });
   }
-  model.history.onChange = () => { render(); update(); };
+  model.history.onChange = () => { if (!committingInline) render(); update(); };
   const api = {
     get dirty() { return model.history.dirty || pending(); },
     get busy() { return busy; },
@@ -139,4 +171,8 @@ export async function openEditor(record, root, { onSave, onClose, onError, onDir
   });
   panel.addEventListener('keydown',event=>{const action=editingShortcut(event);if(action){event.preventDefault();({save,undo,redo})[action].click();}});
   signal.addEventListener('abort', () => api.dispose(), { once: true }); render(); update(); return api;
+}
+
+export async function openEditor(record,root,options) {
+  return withReadMode(await openEditorUI(record,root,options),record,root,options);
 }

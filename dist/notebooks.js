@@ -3,6 +3,8 @@ import { captureZoomAnchor, bindZoomGestures } from './gestures.js';
 import { editingShortcut } from './shortcuts.js';
 import { History } from './editors/history.js';
 import { makeNode, openTextEditor, parseJson, renderText, textNavigation } from './text-files.js';
+import { colorCode, colorInput } from './syntax.js';
+import { documentMarkup } from './document-images.js';
 
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 export const cellText = source => Array.isArray(source) ? source.join('') : typeof source === 'string' ? source : '';
@@ -68,12 +70,13 @@ function renderOutputs(cell, document, renderMarkup) {
   return outputs;
 }
 
-function cellContent(cell, document, renderMarkup) {
+const notebookLanguage=book=>book.metadata?.language_info?.name || book.metadata?.kernelspec?.language || (String(book.metadata?.kernelspec?.name).includes('python')?'python':'text');
+function cellContent(cell, document, renderMarkup, language='text') {
   const content = makeNode(document, 'div', 'notebook-content');
   if (cell.cell_type === 'markdown') {
     const markdown = makeNode(document, 'div', 'markdown-document');
     markdown.append(renderMarkup(attachedMarkdown(cell), 'md', document.defaultView)); content.append(markdown);
-  } else content.append(makeNode(document, 'pre', 'source-preview', cellText(cell.source)));
+  } else {const pre=makeNode(document,'pre','source-preview'),code=makeNode(document,'code');colorCode(code,cellText(cell.source),cell.cell_type==='code'?language:'text');pre.append(code);content.append(pre);}
   return content;
 }
 const cellLabel = (cell, index) => `${index + 1} · ${cell.cell_type === 'markdown' ? 'Markdown' : cell.cell_type === 'raw' ? 'Текст' : cell.cell_type === 'code' ? `Код [${cell.execution_count ?? ' '}]` : cell.cell_type}`;
@@ -83,7 +86,8 @@ export function renderNotebook(notebook, document, renderMarkup) {
   fragment.append(makeNode(document, 'p', 'notebook-caption notebook-intro', 'Ячейки и сохранённые результаты. Выполнение кода доступно в Jupyter.'));
   for (const [index, cell] of notebook.cells.entries()) {
     const section = makeNode(document, 'section', 'notebook-cell');
-    section.append(makeNode(document, 'div', 'notebook-cell-heading', cellLabel(cell, index)), cellContent(cell, document, renderMarkup));
+    section.dataset.cellId=cell.id || 'cell-'+index;
+    section.append(makeNode(document, 'div', 'notebook-cell-heading', cellLabel(cell, index)), cellContent(cell, document, renderMarkup,notebookLanguage(notebook)));
     if (cell.cell_type === 'code' && cell.outputs.length) section.append(renderOutputs(cell, document, renderMarkup));
     fragment.append(section);
   }
@@ -101,7 +105,8 @@ function notebookPreview(source, document, renderMarkup) {
 }
 
 export async function openNotebook(file, root, context) {
-  const [{ renderMarkup }, bytes] = await Promise.all([import('./vendor/markdown.js'), file.arrayBuffer()]);
+  const [{ renderMarkup: engine }, bytes] = await Promise.all([import('./vendor/markdown.js'), file.arrayBuffer()]);
+  const renderMarkup = documentMarkup(engine, context.imageRecord, context.signal);
   if (context.signal.aborted) throw new DOMException('Aborted', 'AbortError');
   const document = root.ownerDocument, article = makeNode(document, 'article', 'notebook-document');
   article.append(notebookPreview(decodeMarkup(bytes), document, renderMarkup)); root.replaceChildren(article);
@@ -117,7 +122,8 @@ export async function openNotebook(file, root, context) {
 /** Edit code/Markdown/raw cells in place without rebuilding or executing their outputs. */
 export async function openNotebookEditor(record, root, options) {
   const { signal, onSave, onClose, onError, onDirty, initialZoom = 1 } = options;
-  const [{ renderMarkup }, bytes] = await Promise.all([import('./vendor/markdown.js'), record.blob.arrayBuffer()]);
+  const [{ renderMarkup: engine }, bytes] = await Promise.all([import('./vendor/markdown.js'), record.blob.arrayBuffer()]);
+  const renderMarkup = documentMarkup(engine, record, signal);
   if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
   const original = decodeMarkup(bytes), document = root.ownerDocument;
   let notebook;
@@ -139,11 +145,12 @@ export async function openNotebookEditor(record, root, options) {
   addBar.append(addCode, addMarkdown, addRaw);
   article.append(node('p', 'notebook-caption notebook-intro', 'Редактируйте ячейки на странице. Сохранённые результаты и метаданные остаются в файле; код здесь не выполняется.'), cells, addBar);
   canvas.append(article); panel.append(bar, canvas); root.replaceChildren(panel);
-  const history = new History(), views = new WeakMap(), originals = new WeakMap(notebook.cells.map(cell => [cell, cellText(cell.source)]));
-  let sourceMode = true, busy = false, disposed = false, zoom = initialZoom, api, sequence = 0;
+  const history = new History(), views = new WeakMap(), inputColors=new WeakMap(),allColors=new Set(),originals = new WeakMap(notebook.cells.map(cell => [cell, cellText(cell.source)]));
+  let sourceMode = true, busy = false, disposed = false, zoom = initialZoom, api, sequence = 0,lastInput;
   const guarded = action => async () => { if (busy || disposed) return; try { await action(); } catch (error) { onError?.(error); } };
   function resize(input) {
     input.style.height = 'auto'; input.style.height = `${Math.max(72, input.scrollHeight + 4)}px`;
+    inputColors.get(input)?.refresh();
   }
   function update() {
     if (disposed) return;
@@ -153,7 +160,7 @@ export async function openNotebookEditor(record, root, options) {
     for (const b of [addCode, addMarkdown, addRaw]) b.disabled = busy || notebook.cells.length >= 10000;
     for (const [index, cell] of notebook.cells.entries()) {
       const view = views.get(cell); if (!view) continue;
-      view.label.textContent = cellLabel(cell, index); view.input.hidden = !sourceMode; view.content.hidden = sourceMode;
+      view.label.textContent = cellLabel(cell, index); view.input.hidden = view.colors.wrap.hidden = !sourceMode; view.content.hidden = sourceMode;
       view.input.readOnly = busy || cell.metadata.editable === false;
       view.remove.hidden = !sourceMode; view.remove.disabled = busy || cell.metadata.deletable === false || cell.metadata.editable === false;
       view.stale.hidden = cell.cell_type !== 'code' || !cell.outputs.length || cellText(cell.source) === originals.get(cell);
@@ -167,11 +174,14 @@ export async function openNotebookEditor(record, root, options) {
     const input = node('textarea', 'notebook-source'); input.value = cellText(cell.source).replace(/\r\n?/g, '\n');
     input.spellcheck = false; input.autocomplete = 'off'; input.maxLength = 8 * 1024 * 1024;
     input.setAttribute('aria-label', `Исходный текст ячейки ${cell.cell_type}`);
-    const content = cellContent(cell, document, renderMarkup); content.hidden = true;
+    input.addEventListener('focus',()=>{lastInput=input;});
+    const content = cellContent(cell, document, renderMarkup,notebookLanguage(notebook)); content.hidden = true;
     const stale = node('p', 'notebook-caption notebook-stale', 'Код изменён. Ниже показан результат предыдущего выполнения.'); stale.hidden = true;
     section.append(heading, input, content, stale);
     if (cell.cell_type === 'code' && cell.outputs.length) section.append(renderOutputs(cell, document, renderMarkup));
-    const view = { section, label, remove, input, content, stale, key: `cell-${sequence++}` }; views.set(cell, view);
+    const colors=colorInput(input,cell.cell_type==='markdown'?'markdown':cell.cell_type==='code'?notebookLanguage(notebook):'text',{signal});
+    inputColors.set(input,colors);allColors.add(colors);
+    const view = { section, label, remove, input, content, stale, colors, key: `cell-${sequence++}` }; views.set(cell, view);section.dataset.cellId=cell.id || view.key;
     let selection = { start: 0, end: 0 };
     input.addEventListener('beforeinput', () => { selection = { start: input.selectionStart, end: input.selectionEnd }; });
     function commit() {
@@ -182,7 +192,7 @@ export async function openNotebookEditor(record, root, options) {
       const apply = (source, position) => {
         cell.source = source; input.value = cellText(source).replace(/\r\n?/g, '\n');
         input.setSelectionRange(position.start, position.end); resize(input);
-        if (!sourceMode) { const fresh = cellContent(cell, document, renderMarkup); view.content.replaceChildren(...fresh.childNodes); }
+        if (!sourceMode) { const fresh = cellContent(cell, document, renderMarkup,notebookLanguage(notebook)); view.content.replaceChildren(...fresh.childNodes); }
       };
       history.execute(() => apply(next, after), () => apply(before, previousSelection), view.key); selection = after;
     }
@@ -214,10 +224,10 @@ export async function openNotebookEditor(record, root, options) {
   function toggleView() {
     if (busy || disposed) return;
     if (sourceMode) for (const cell of notebook.cells) {
-      const view = views.get(cell), fresh = cellContent(cell, document, renderMarkup); view.content.replaceChildren(...fresh.childNodes);
+      const view = views.get(cell), fresh = cellContent(cell, document, renderMarkup,notebookLanguage(notebook)); view.content.replaceChildren(...fresh.childNodes);
     }
     sourceMode = !sourceMode; update();
-    if (sourceMode) for (const cell of notebook.cells) resize(views.get(cell).input);
+    if (sourceMode) {for (const cell of notebook.cells) resize(views.get(cell).input);const input=lastInput?.isConnected?lastInput:views.get(notebook.cells[0])?.input;input?.focus({preventScroll:true});}
   }
   function setZoom(value, point) {
     if (disposed) return;
@@ -231,7 +241,7 @@ export async function openNotebookEditor(record, root, options) {
     export() { const text = JSON.stringify(notebook, null, 2) + '\n'; parseNotebook(text); return new TextEncoder().encode(text).buffer; },
     toggleView, setBusy(value) { busy = !!value; update(); },
     adjustZoom: delta => setZoom(delta === null ? 1 : zoom + delta),
-    dispose() { if (disposed) return; disposed = true; gestures.dispose(); }
+    dispose() { if (disposed) return; disposed = true; gestures.dispose();for(const colors of allColors)colors.dispose();allColors.clear(); }
   };
   const gestures = bindZoomGestures(canvas, { signal, getZoom: () => zoom, setZoom, onError });
   history.onChange = update;

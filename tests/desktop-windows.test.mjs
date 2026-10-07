@@ -6,14 +6,14 @@ import { EventEmitter } from 'node:events';
 import vm from 'node:vm';
 
 test('Desktop routes each import and OS file to its own trusted window', async () => {
-  const created = [], handlers = new Map(), savedIn = [];
+  const created = [], handlers = new Map(), savedIn = [], imageReads = [];
   let id = 0;
   class BrowserWindow extends EventEmitter {
     constructor() {
       super(); this.destroyed = false; this.webContents = new EventEmitter();
       Object.assign(this.webContents, { id: ++id, mainFrame: { url: 'omni://app/index.html' }, sent: [], session: {
         setPermissionRequestHandler() {}, webRequest: { onBeforeRequest() {} }
-      }, setWindowOpenHandler() {}, setVisualZoomLevelLimits: async () => {}, send(type, data) { this.sent.push({ type, data }); } });
+      }, setWindowOpenHandler() {}, setIgnoreMenuShortcuts(value) { this.ignoreMenuShortcuts=value; }, setVisualZoomLevelLimits: async () => {}, send(type, data) { this.sent.push({ type, data }); } });
       created.push(this);
     }
     isDestroyed() { return this.destroyed; }
@@ -22,17 +22,19 @@ test('Desktop routes each import and OS file to its own trusted window', async (
     async loadURL() {}
     static getFocusedWindow() { return created.at(-1); }
   }
-  const app = new EventEmitter(); Object.assign(app, { requestSingleInstanceLock: () => true, whenReady: async () => {}, quit() {}, isPackaged: false });
+  const app = new EventEmitter(); Object.assign(app, { requestSingleInstanceLock: () => true, whenReady: async () => {}, quit() {}, isPackaged: false, setAppUserModelId(value) { this.modelId = value; } });
   const electron = { app, BrowserWindow, ipcMain: { handle(name, callback) { handlers.set(name, callback); } },
     protocol: { registerSchemesAsPrivileged() {}, handle() {} },
     dialog: { showMessageBoxSync() { throw new Error('Opening another file must not discard a draft'); }, showErrorBox() {}, async showSaveDialog(window) { savedIn.push(window); return { canceled: true }; } }
   };
-  const fs = { async stat() { return { isFile: () => true, size: 4 }; }, async readFile() { return Buffer.from('file'); }, async writeFile() {} };
+  const fs = { async realpath(value) { return value; }, async stat() { return { isFile: () => true, size: 4 }; }, async readFile() { return Buffer.from('file'); }, async writeFile() {} };
+  const documentImages = { readDocumentImage(base, relative) { imageReads.push({base, relative}); return 'data:image/png;base64,cG5n'; } };
   vm.runInNewContext(await readFile(new URL('../desktop/main.cjs', import.meta.url), 'utf8'), {
-    require(name) { if (name === 'electron') return electron; if (name === 'node:fs/promises') return fs; if (name === 'node:path') return path; throw new Error(name); },
-    __dirname: '/application/desktop', process: { argv: ['electron', '/application'] }, ArrayBuffer, Buffer, URL, Response
+    require(name) { if (name === 'electron') return electron; if (name === 'node:fs/promises') return fs; if (name === 'node:path') return path; if(name === './document-images.cjs') return documentImages; throw new Error(name); },
+    __dirname: '/application/desktop', process: { platform: 'win32', argv: ['electron', '/application'] }, ArrayBuffer, Buffer, URL, Response
   });
   await new Promise(resolve => setImmediate(resolve));
+  assert.equal(app.modelId, 'dev.klio.omni');
   const event = window => ({ sender: window.webContents, senderFrame: window.webContents.mainFrame });
   const file = name => ({ name, bytes: new ArrayBuffer(4) });
   assert.equal(created.length, 1);
@@ -41,6 +43,7 @@ test('Desktop routes each import and OS file to its own trusted window', async (
   handlers.get('omni-open-file')(event(first), file('two.tex'));
   handlers.get('omni-open-file')(event(first), file('three.pptx'));
   assert.equal(created.length, 3); assert.equal(first.webContents.sent.length, 1);
+  assert.ok(created.every(window=>window.webContents.ignoreMenuShortcuts===true));
   for (const window of created.slice(1)) handlers.get('omni-ready')(event(window));
   assert.deepEqual(created.map(w => w.webContents.sent[0].data[0].name), ['one.md', 'two.tex', 'three.pptx']);
   assert.throws(() => handlers.get('omni-open-file')({ ...event(first), senderFrame: { url: 'omni://app/index.html' } }, file('blocked.docx')), /Invalid sender/);
@@ -73,4 +76,18 @@ test('Desktop routes each import and OS file to its own trusted window', async (
     const target = created[before + index]; handlers.get('omni-ready')(event(target));
     assert.equal(target.webContents.sent[0].data[0].name, name);
   }
+  app.emit('second-instance', {}, ['electron', '/docs/seminar.ipynb', '/other/notes.md']);
+  await new Promise(resolve => setImmediate(resolve));
+  const notebookWindow = created.at(-2), otherWindow = created.at(-1);
+  handlers.get('omni-ready')(event(notebookWindow)); handlers.get('omni-ready')(event(otherWindow));
+  const imported = notebookWindow.webContents.sent[0].data[0];
+  assert.equal(imported.sourcePath, undefined);
+  assert.equal(handlers.get('omni-read-image')(event(notebookWindow), imported.imageSource, 'seminar_data/2b827.png'), 'data:image/png;base64,cG5n');
+  assert.deepEqual(imageReads.at(-1), {base:'/docs', relative:'seminar_data/2b827.png'});
+  assert.equal(handlers.get('omni-read-image')(event(otherWindow), imported.imageSource, 'seminar_data/2b827.png'), null);
+  await handlers.get('omni-open-file')(event(otherWindow), {name:'selected.md', bytes:new ArrayBuffer(4), sourcePath:'/selected/selected.md'});
+  const selectedWindow = created.at(-1); handlers.get('omni-ready')(event(selectedWindow));
+  const selected = selectedWindow.webContents.sent[0].data[0];
+  handlers.get('omni-read-image')(event(selectedWindow), selected.imageSource, 'image.png');
+  assert.equal(imageReads.at(-1).base, '/selected');
 });

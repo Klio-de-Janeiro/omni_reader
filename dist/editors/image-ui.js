@@ -1,5 +1,5 @@
 import { bindZoomGestures, captureZoomAnchor } from '../gestures.js';
-import { editingShortcut } from '../shortcuts.js';
+import { editingShortcut, shortcutCommand } from '../shortcuts.js';
 import { hsvToHex, hexToHsv } from '../colors.js';
 import { imageGeometry, imagePoint } from './image.js';
 
@@ -109,8 +109,8 @@ export function openImageUI(model, record, root, { signal, onSave, onClose, onEr
   save.onclick=run(()=>onSave(api));close.onclick=run(onClose);
   panel.addEventListener('keydown',event=>{
     const action=editingShortcut(event);if(action){event.preventDefault();({save,undo,redo})[action].click();return;}
-    if(event.ctrlKey || event.metaKey || event.altKey || event.target.closest('input,textarea,select'))return;
-    const selected=({b:'brush',e:'eraser',r:'rectangle'})[event.key.toLowerCase()];if(selected){event.preventDefault();choices.get(selected).click();}
+    if(event.target.closest('input,textarea,select'))return;
+    const selected=shortcutCommand(event);if(choices.has(selected)){event.preventDefault();choices.get(selected).click();}
   });
   api={get position(){return {zoom};},get dirty(){return model.history.dirty || pending() || !!draft;},get busy(){return busy;},
     async export(){if(draft)throw new Error('Завершите штрих перед сохранением.');flush();return model.export();},

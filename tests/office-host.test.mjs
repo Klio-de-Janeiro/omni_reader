@@ -6,7 +6,7 @@ import {openOfficeEditor} from '../dist/vendor/editors.js';
 import {openOfficeUI} from '../dist/editors/office-ui.js';
 const NativeFile=globalThis.File;
 const array=b=>b.buffer.slice(b.byteOffset,b.byteOffset+b.byteLength);
-const wait=()=>new Promise(resolve=>setTimeout(resolve,30));
+const until=async predicate=>{for(let i=0;i<200;i++){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,5));}assert.fail('Office operation did not finish');};
 test('Office toolbar applies page/layout choices and waits for pending edits before export',async()=>{
   const w=new JSDOM('<div id="root"></div>',{pretendToBeVisual:true}).window;
   globalThis.window=w;globalThis.document=w.document;globalThis.addEventListener=w.addEventListener.bind(w);globalThis.removeEventListener=w.removeEventListener.bind(w);
@@ -35,11 +35,11 @@ test('Office toolbar applies page/layout choices and waits for pending edits bef
   try{
     api=await openOfficeUI(model,{name:'sample.pptx',ext:'pptx'},root,{signal:controller.signal,onError:e=>errors.push(e.message),onSave:async session=>{saved=await session.export();},onClose:()=>{closed=true;}});
     assert.equal(requests.find(r=>r.type==='open').viewMode,'scroll');assert.equal(api.dirty,false);
-    const layout=root.querySelector('select');layout.value='page';layout.dispatchEvent(new w.Event('change'));await wait();assert.equal(requests.filter(r=>r.type==='view-mode').at(-1).mode,'page');assert.equal(layout.value,'page');assert.equal(api.dirty,false);
-    const at=root.querySelector('input');at.value=2;at.dispatchEvent(new w.Event('change'));await wait();assert.equal(requests.filter(r=>r.type==='page').at(-1).page,2);assert.equal(at.value,'2');
+    const layout=root.querySelector('select');layout.value='page';layout.dispatchEvent(new w.Event('change'));await until(()=>!api.busy && requests.filter(r=>r.type==='view-mode').at(-1)?.mode==='page');assert.equal(requests.filter(r=>r.type==='view-mode').at(-1).mode,'page');assert.equal(layout.value,'page');assert.equal(api.dirty,false);
+    const at=root.querySelector('input');at.value=2;at.dispatchEvent(new w.Event('change'));await until(()=>!api.busy && requests.filter(r=>r.type==='page').at(-1)?.page===2);assert.equal(requests.filter(r=>r.type==='page').at(-1).page,2);assert.equal(at.value,'2');
     const button=text=>[...root.querySelectorAll('button')].find(b=>b.textContent===text);
-    button('+ Слайд').click();await new Promise(resolve=>setTimeout(resolve,80));assert.equal(model.pageCount,3);assert.equal(requests.filter(r=>r.type==='open').at(-1).viewMode,'page');assert.equal(api.dirty,true);
-    deferredEdit='Последний ввод ✓';button('Сохранить копию').click();await wait();assert.ok(saved);const reopened=await openOfficeEditor(array(saved),'pptx');assert.equal(reopened.getBlocks()[0].text,'Последний ввод ✓');
-    button('К просмотру').click();await wait();assert.ok(closed);assert.deepEqual(errors,[]);
+    button('+ Слайд').click();await until(()=>!api.busy && model.pageCount===3);assert.equal(model.pageCount,3);assert.equal(requests.filter(r=>r.type==='open').at(-1).viewMode,'page');assert.equal(api.dirty,true);
+    deferredEdit='Последний ввод ✓';button('Сохранить копию').click();await until(()=>saved && !api.busy);assert.ok(saved);const reopened=await openOfficeEditor(array(saved),'pptx');assert.equal(reopened.getBlocks()[0].text,'Последний ввод ✓');
+    button('К просмотру').click();await until(()=>closed && !api.busy);assert.ok(closed);assert.deepEqual(errors,[]);
   }finally{api?.dispose();controller.abort();observer.disconnect();globalThis.fetch=oldFetch;w.close();}
 });

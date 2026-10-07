@@ -47,3 +47,4 @@ body.focus-mode .audio-mark,body.focus-mode .audio-panel>label,
 body.focus-mode .seek-bar{display:none!important}
 body.focus-mode .table-panel{height:100%;gap:0}
 body.focus-mode .table-panel>.table-scroll{flex:1;max-height:none;min-height:0}
+.editor-grid td:has(>.csv-cell-input){padding:0}.editor-grid .csv-cell-input{display:block;box-sizing:border-box;width:100%;min-width:110px;min-height:2.4em;margin:0;border:0;border-radius:0;padding:8px;background:transparent;color:inherit;font:inherit;line-height:1.4;resize:vertical;outline:2px solid var(--accent,#168cff);outline-offset:-2px;white-space:pre-wrap}

@@ -47,6 +47,23 @@ for (const editing of [false, true]) test('Bundled DOCX entry opens and zooms: '
       assert.equal(shortcut.defaultPrevented,true);assert.equal(messages.at(-1).type,'shell-shortcut');assert.equal(messages.at(-1).command,command);
     }
     if(editing){content.dispatchEvent(new w.KeyboardEvent('keydown',{ctrlKey:true,altKey:true,key:'z',code:'KeyZ',bubbles:true,cancelable:true}));assert.equal(messages.at(-1).type,'edit-shortcut');assert.equal(messages.at(-1).command,'undo');}
+    for(const [code,command] of [['KeyD','toggle-edit'],['KeyE','highlight']]){
+      const shortcut=new w.KeyboardEvent('keydown',{ctrlKey:true,code,bubbles:true,cancelable:true});content.dispatchEvent(shortcut);assert.equal(shortcut.defaultPrevented,true);assert.equal(messages.at(-1).command,command);
+    }
+    const synced=waitFor(data=>data.requestId===30);
+    send({type:'shortcuts',bindings:{'toggle-edit':['Ctrl+Alt+KeyK'],highlight:['Ctrl+Alt+KeyH'],underline:['Ctrl+Alt+KeyU']}});send({type:'flush',requestId:30});await synced;
+    const oldKey=new w.KeyboardEvent('keydown',{ctrlKey:true,code:'KeyD',bubbles:true,cancelable:true});content.dispatchEvent(oldKey);assert.equal(oldKey.defaultPrevented,false);
+    const newKey=new w.KeyboardEvent('keydown',{ctrlKey:true,altKey:true,key:'л',code:'KeyK',bubbles:true,cancelable:true});content.dispatchEvent(newKey);assert.equal(newKey.defaultPrevented,true);assert.equal(messages.at(-1).command,'toggle-edit');
+    const walker=w.document.createTreeWalker(content,w.NodeFilter.SHOW_TEXT);let selected;
+    while(selected=walker.nextNode())if(selected.textContent.includes('OMNI'))break;
+    assert.ok(selected);const range=w.document.createRange();range.setStart(selected,0);range.setEnd(selected,4);w.getSelection().removeAllRanges();w.getSelection().addRange(range);w.document.dispatchEvent(new w.Event('selectionchange'));
+    if(editing){
+      content.dispatchEvent(new w.KeyboardEvent('keydown',{ctrlKey:true,altKey:true,code:'KeyU',bubbles:true,cancelable:true}));assert.ok(content.querySelector('[data-underline="true"]'));
+    }else{
+      const marked=waitFor(data=>data.requestId===31);send({type:'highlight-add',color:'#ffe066',requestId:31});assert.equal((await marked).result[0].quote,'OMNI');assert.ok(content.querySelector('mark'));
+      const found=waitFor(data=>data.requestId===32);send({type:'find',query:'OMNI DOCX',requestId:32});assert.equal((await found).result.page,1);assert.equal(w.getSelection().toString(),'OMNI DOCX');
+      const cleared=waitFor(data=>data.requestId===33);send({type:'highlight-clear',requestId:33});await cleared;assert.equal(content.querySelector('mark'),null);
+    }
     assert.equal(touch(w, content, 'touchstart', [[1, 50, 100]]).defaultPrevented, false);
     assert.equal(touch(w, content, 'touchmove', [[1, 50, 110]]).defaultPrevented, false);
     assert.equal(touch(w, content, 'touchstart', [[1, 50, 100], [2, 150, 100]]).defaultPrevented, true);

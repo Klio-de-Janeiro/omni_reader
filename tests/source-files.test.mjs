@@ -8,7 +8,9 @@ import { openEditor } from '../dist/editors/ui.js';
 import { textCodec, formatJson } from '../dist/text-files.js';
 import { parseNotebook } from '../dist/notebooks.js';
 import { validateFile, validateBytes } from '../dist/validation.js';
-import { isFullscreenShortcut, isThemeShortcut, zoomShortcut } from '../dist/shortcuts.js';
+import { isFullscreenShortcut, isThemeShortcut, zoomShortcut, shortcutCommand, getShortcutBindings, shortcutLabel } from '../dist/shortcuts.js';
+import { initShortcutSettings } from '../dist/shortcut-settings.js';
+import { createReadHighlights } from '../dist/read-highlights.js';
 import { initThemes } from '../dist/themes.js';
 import { syncBranding } from '../scripts/branding.mjs';
 import pngjs from '../vendor-sources/pngjs/lib/png.js';
@@ -159,7 +161,7 @@ test('Fullscreen host exposes source editing and exports .env copies without an 
   const html = await readFile(new URL('../dist/index.html', import.meta.url), 'utf8'), f = fixture(html), w = f.w;
   const record = { id: 'env', name: '.env', ext: 'env', blob: new File([samples.env], '.env'), size: samples.env.length, saved: true };
   let exported;
-  Object.assign(w, { File, TextEncoder, normalizeMode: v => v === 'page' ? 'page' : 'scroll', isFullscreenShortcut, isThemeShortcut, zoomShortcut, initThemes,
+  Object.assign(w, { File, TextEncoder, normalizeMode: v => v === 'page' ? 'page' : 'scroll', isFullscreenShortcut, isThemeShortcut, zoomShortcut, initThemes, shortcutCommand, getShortcutBindings, shortcutLabel, initShortcutSettings, createReadHighlights,
     copyText: async () => {}, isNative: true, hasDocumentWindows: false, saveOriginal: async record => { exported = record; },
     setNativeFullscreen: () => true, setNativeDocument() {}, connectNativeFiles() {}, listFiles: async () => [record], saveFile: async () => {}, formatSize: () => '1 B', validateFile, validateBytes, openViewer, openEditor });
   w.URL.createObjectURL = () => 'blob:test'; w.URL.revokeObjectURL = () => {};

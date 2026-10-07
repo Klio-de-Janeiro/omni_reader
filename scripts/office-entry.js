@@ -1,10 +1,11 @@
 import { parseAsync, renderDocument } from 'docx-preview';
 import { PptxViewer, RECOMMENDED_ZIP_LIMITS } from '@aiden0z/pptx-renderer';
 import { createInlineEditor } from './office-inline.js';
-import { isFullscreenShortcut, isThemeShortcut, zoomShortcut } from '../dist/shortcuts.js';
+import { applyShortcutBindings, shortcutCommand } from '../dist/shortcuts.js';
+import { createReadHighlights } from '../dist/read-highlights.js';
 import { officeModes } from './office-modes.js';
 import { wheelZoomDelta, captureZoomAnchor, bindTouchPinch } from '../dist/gestures.js';
-let viewer, token, zoom=1,docWidth=800,docScale,modes,editor,renderBookmark;
+let viewer, token, zoom=1,docWidth=800,docScale,modes,editor,renderBookmark,highlights;
 let queryState='',hitIndex=-1, action=Promise.resolve();
 const container=document.querySelector('#office');
 const send=data=>parent.postMessage({...data,token},'*');
@@ -16,6 +17,7 @@ function fitDocument(){
 }
 async function openDocument(data){
   token=data.token;
+  applyShortcutBindings(data.bindings || {},window);
   if(data.blocks)editor=createInlineEditor(data.blocks,message=>{
     if(message.type==='edit-selection' && message.id){
       const el=[...container.querySelectorAll('.omni-edit-content')].find(n=>n.dataset.block===message.id),section=el?.closest('section.docx');
@@ -50,10 +52,15 @@ async function openDocument(data){
     docWidth=Math.max(...sections.map(s=>s.getBoundingClientRect().width || 800));docScale.style.width=docWidth+'px';modes.bindDocx();
     send({type:'loaded',pages:sections.length});
   }
+  highlights=createReadHighlights(container,{canHighlight:()=>!editor});
 }
 async function message(data){
   if(data.type==='open' && !token){await openDocument(data);return;}
   if(!token || data.token!==token)return;
+  if(data.type==='shortcuts')applyShortcutBindings(data.bindings,window);
+  if(data.type==='highlight-add')send({type:'reply',requestId:data.requestId,result:highlights.add(data.color)});
+  if(data.type==='highlight-set'){highlights.set(data.records);send({type:'reply',requestId:data.requestId,result:true});}
+  if(data.type==='highlight-clear'){highlights.clear();send({type:'reply',requestId:data.requestId,result:[]});}
   if(data.type==='theme' && /^#[\da-f]{6}$/i.test(data.theme?.background)){
     document.documentElement.style.background=data.theme.background;document.body.style.background=data.theme.background;
     document.documentElement.style.colorScheme=data.theme.dark?'dark':'light';
@@ -74,14 +81,20 @@ async function message(data){
     editor?.message(data);
   }
   if(data.type==='find'){
+    if(typeof data.query!=='string' || !data.query){send({type:'reply',requestId:data.requestId,result:null});return;}
     if(queryState!==data.query){queryState=data.query;hitIndex=-1;}
     let result=null;
     if(viewer){
       const hits=viewer.searchText(data.query);if(hits.length){const hit=hits[(++hitIndex)%hits.length];await modes.go(hit.slideIndex+1);result={page:hit.slideIndex+1,message:'Совпадение '+((hitIndex%hits.length)+1)+' / '+hits.length};}
     }else{
-      const hits=[],walker=document.createTreeWalker(container,NodeFilter.SHOW_TEXT);let n;const query=data.query.toLocaleLowerCase();
-      while(n=walker.nextNode()){if(n.parentElement.closest('style,script'))continue;let at=n.textContent.toLocaleLowerCase().indexOf(query);while(at>=0){hits.push({n,at});at=n.textContent.toLocaleLowerCase().indexOf(query,at+query.length);}}
-      if(hits.length){const hit=hits[(++hitIndex)%hits.length],page=Number(hit.n.parentElement.closest('section.docx')?.dataset.page || 1);await modes.go(page);const r=document.createRange();r.setStart(hit.n,hit.at);r.setEnd(hit.n,hit.at+data.query.length);getSelection().removeAllRanges();getSelection().addRange(r);hit.n.parentElement.scrollIntoView({block:'center'});result={page,message:'Совпадение '+((hitIndex%hits.length)+1)+' / '+hits.length};}
+      const hits=[],query=data.query.toLocaleLowerCase();
+      for(const section of container.querySelectorAll('section.docx')){
+        const walker=document.createTreeWalker(section,NodeFilter.SHOW_TEXT),nodes=[];let n,text='';
+        while(n=walker.nextNode()){if(n.parentElement.closest('style,script'))continue;nodes.push({node:n,start:text.length,end:text.length+n.length});text+=n.textContent;}
+        let at=text.toLocaleLowerCase().indexOf(query);
+        while(at>=0){const first=nodes.find(part=>at>=part.start && at<part.end),last=nodes.find(part=>at+data.query.length>part.start && at+data.query.length<=part.end);if(first && last)hits.push({first,last,at,page:Number(section.dataset.page || 1)});at=text.toLocaleLowerCase().indexOf(query,at+query.length);}
+      }
+      if(hits.length){const hit=hits[(++hitIndex)%hits.length];await modes.go(hit.page);const r=document.createRange();r.setStart(hit.first.node,hit.at-hit.first.start);r.setEnd(hit.last.node,hit.at+data.query.length-hit.last.start);getSelection().removeAllRanges();getSelection().addRange(r);hit.first.node.parentElement.scrollIntoView({block:'center'});result={page:hit.page,message:'Совпадение '+((hitIndex%hits.length)+1)+' / '+hits.length};}
     }
     send({type:'reply',requestId:data.requestId,result});
   }
@@ -100,21 +113,16 @@ addEventListener('wheel',event=>{
 const disposeTouch=bindTouchPinch(window,(delta,anchor)=>{
   if(token)send({type:'zoom-gesture',delta,anchor});
 });
-addEventListener('pagehide',()=>{disposeTouch();modes?.dispose();},{once:true});
+addEventListener('pagehide',()=>{disposeTouch();modes?.dispose();highlights?.dispose();},{once:true});
 document.addEventListener('selectionchange',()=>{const text=getSelection()?.toString() || '';if(text)send({type:'selection',text});});
 document.addEventListener('keydown',event=>{
-  if(isThemeShortcut(event)){event.preventDefault();event.stopImmediatePropagation();if(!event.repeat)send({type:'shell-shortcut',command:'theme'});return;}
-  const scaleCommand=zoomShortcut(event);
-  if(scaleCommand){event.preventDefault();event.stopImmediatePropagation();send({type:'shell-shortcut',command:scaleCommand});return;}
-  if(isFullscreenShortcut(event)){event.preventDefault();event.stopImmediatePropagation();if(!event.repeat)send({type:'shell-shortcut',command:'focus'});return;}
-  if(event.key==='Escape'){event.preventDefault();send({type:'shell-shortcut',command:'escape'});}
-  if(event.defaultPrevented || event.ctrlKey || event.metaKey)return;
+  const command=shortcutCommand(event);if(!command)return;
   const typing=event.target.closest?.('input,textarea,select,[contenteditable="true"]');
-  let delta=0;
-  if(event.altKey && event.key==='ArrowLeft' || !typing && event.key==='PageUp')delta=-1;
-  if(event.altKey && event.key==='ArrowRight' || !typing && event.key==='PageDown')delta=1;
-  if(delta){event.preventDefault();send({type:'shell-shortcut',command:delta>0?'next':'previous'});}
-
+  if(['next','previous'].includes(command) && typing && !event.ctrlKey && !event.altKey && !event.metaKey)return;
+  if(['theme','focus','escape','toggle-edit','highlight','shortcut-settings','next','previous'].includes(command) || command.startsWith('zoom-') || command==='save' && !editor){
+    event.preventDefault();event.stopImmediatePropagation();
+    if(!event.repeat || command.startsWith('zoom-') || ['next','previous'].includes(command))send({type:'shell-shortcut',command});
+  }
 },true);
 addEventListener('click',event=>{if(event.target.closest('a'))event.preventDefault();},true);
 send({type:'ready'});

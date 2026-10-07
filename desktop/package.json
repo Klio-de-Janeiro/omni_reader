@@ -7,7 +7,7 @@
   "main": "main.cjs",
   "scripts": {
     "start": "electron .",
-    "dist:win": "electron-builder --win nsis --x64"
+    "dist:win": "node ../scripts/build-windows.mjs"
   },
   "devDependencies": {
     "electron": "42.1.0",
@@ -35,13 +35,14 @@
     "files": [
       "main.cjs",
       "preload.cjs",
+      "document-images.cjs",
       "package.json",
       "www/**/*"
     ],
     "win": {
       "target": "nsis",
       "icon": "../dist/icon.ico",
-      "signAndEditExecutable": false
+      "signAndEditExecutable": true
     },
     "nsis": {
       "oneClick": false,

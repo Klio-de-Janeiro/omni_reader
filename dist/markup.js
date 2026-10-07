@@ -1,6 +1,8 @@
 import { captureZoomAnchor, bindZoomGestures } from './gestures.js';
 import { editingShortcut } from './shortcuts.js';
 import { History } from './editors/history.js';
+import { colorInput } from './syntax.js';
+import { documentMarkup } from './document-images.js';
 
 /** Decode BOM-marked Unicode and UTF-8, with a fallback for Windows text files. */
 export function decodeMarkup(bytes) {
@@ -13,7 +15,8 @@ export function decodeMarkup(bytes) {
 
 /** Mount a formatted Markdown/TeX document in the existing scrollable file area. */
 export async function openMarkup(file, root, context) {
-  const [{ renderMarkup }, bytes] = await Promise.all([import('./vendor/markdown.js'), file.arrayBuffer()]);
+  const [{ renderMarkup: engine }, bytes] = await Promise.all([import('./vendor/markdown.js'), file.arrayBuffer()]);
+  const renderMarkup = documentMarkup(engine, context.imageRecord, context.signal);
   if (context.signal.aborted) throw new DOMException('Aborted', 'AbortError');
   const article = document.createElement('article'); article.className = 'markdown-document';
   article.append(renderMarkup(decodeMarkup(bytes), context.ext, root.ownerDocument.defaultView)); root.replaceChildren(article);
@@ -42,7 +45,8 @@ export async function openMarkup(file, root, context) {
 /** Edit Markdown source inline; previews and exports always use the current draft. */
 export async function openMarkupEditor(record, root, options) {
   const { signal, onSave, onClose, onError, onDirty, initialZoom = 1 } = options;
-  const [{ renderMarkup }, bytes] = await Promise.all([import('./vendor/markdown.js'), record.blob.arrayBuffer()]);
+  const [{ renderMarkup: engine }, bytes] = await Promise.all([import('./vendor/markdown.js'), record.blob.arrayBuffer()]);
+  const renderMarkup = documentMarkup(engine, record, signal);
   if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
   const original = decodeMarkup(bytes), window = root.ownerDocument.defaultView;
   let zoom = initialZoom, busy = false, disposed = false, sourceMode = true, api;
@@ -58,24 +62,27 @@ export async function openMarkupEditor(record, root, options) {
   const article = document.createElement('article'); article.className = 'markdown-document'; article.hidden = true;
   const history=new History();let draft=original,selection={start:0,end:0};
   canvas.append(input, article); panel.append(bar, canvas); root.replaceChildren(panel);
+  const colors=colorInput(input,'md',{signal});
   function update() {
     if (disposed) return;
     input.readOnly = busy; for (const button of [preview, save, close]) button.disabled = busy;
     save.disabled = busy || input.value === original; preview.textContent = sourceMode ? 'Просмотр' : 'Редактировать';
     undo.disabled=busy || !history.done.length;redo.disabled=busy || !history.future.length;
     onDirty?.(input.value !== original);
+    colors.refresh();
   }
   const run = action => async () => { if (busy || disposed) return; try { await action(); } catch (error) { onError(error); } };
   function toggleView() {
     if (busy || disposed) return;
     if (sourceMode) article.replaceChildren(renderMarkup(input.value, 'md', window));
-    sourceMode = !sourceMode; input.hidden = !sourceMode; article.hidden = sourceMode;
+    sourceMode = !sourceMode; input.hidden = !sourceMode;colors.wrap.hidden=!sourceMode; article.hidden = sourceMode;
     update(); if (sourceMode) input.focus({ preventScroll: true });
   }
   function setZoom(value) {
     if (disposed) return;
     zoom = Math.max(0.5, Math.min(3, value));
     input.style.fontSize = `${16 * zoom}px`; article.style.fontSize = `${16 * zoom}px`;
+    colors.refresh();
   }
   api = {
     get dirty() { return input.value !== original; }, get busy() { return busy; }, get sourceMode() { return sourceMode; },
@@ -83,7 +90,7 @@ export async function openMarkupEditor(record, root, options) {
     export: () => new TextEncoder().encode(input.value).buffer,
     setBusy(value) { busy = !!value; update(); },
     toggleView, adjustZoom: delta => setZoom(delta === null ? 1 : zoom + delta),
-    dispose() { disposed = true; gestures.dispose(); }
+    dispose() { disposed = true; gestures.dispose();colors.dispose(); }
   };
   const gestures = bindZoomGestures(canvas, { signal, getZoom: () => zoom, setZoom, onError });
   preview.onclick = toggleView; save.onclick = run(() => onSave(api)); close.onclick = run(onClose);

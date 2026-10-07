@@ -3,6 +3,7 @@ import { build } from 'esbuild';
 import { createHash } from 'node:crypto';
 import { syncBranding } from './branding.mjs';
 await syncBranding();
+await build({ entryPoints: ['scripts/syntax-entry.js'], bundle: true, minify: true, format: 'esm', outfile: 'dist/vendor/syntax-engine.js', platform: 'browser', target: 'es2022', legalComments: 'linked' });
 await build({ entryPoints: ['scripts/editors-entry.js'], alias: { sax: './vendor-sources/sax/lib/sax.js' }, bundle: true, minify: true, format: 'esm', outfile: 'dist/vendor/editors.js', platform: 'browser', target: 'es2022', legalComments: 'linked' });
 await cp('vendor-sources/pdf-lib/pdf-lib.esm.js', 'dist/vendor/pdf-lib.js');
 await build({ entryPoints: ['scripts/xlsx-entry.js'], alias: { sax: './vendor-sources/sax/lib/sax.js' }, bundle: true, minify: true, format: 'esm', outfile: 'dist/vendor/xlsx.js', platform: 'browser', target: 'es2022', legalComments: 'linked' });
@@ -37,7 +38,7 @@ await cp('node_modules/@aiden0z/pptx-renderer/licenses', 'dist/licenses/pptx-thi
 await mkdir('dist/fonts', { recursive: true });
 for (const subset of ['latin', 'cyrillic']) await cp(`node_modules/@fontsource-variable/inter/files/inter-${subset}-wght-normal.woff2`, `dist/fonts/inter-${subset}.woff2`);
 await cp('node_modules/@fontsource-variable/inter/LICENSE', 'dist/licenses/Inter-OFL.txt');
-for (const name of ['xml-js', 'sax', 'pdf-lib', 'marked', 'katex', 'dompurify']) await cp(`vendor-sources/${name}`, `dist/licenses/vendor-${name}`, { recursive: true });
+for (const name of ['xml-js', 'sax', 'pdf-lib', 'marked', 'katex', 'dompurify', 'highlightjs']) await cp(`vendor-sources/${name}`, `dist/licenses/vendor-${name}`, { recursive: true });
 const officeCode = (await readFile('dist/vendor/office.js', 'utf8')).replace(/<\/script/gi, '<\\/script');
 const officeHash = createHash('sha256').update(officeCode).digest('base64');
 const officeTemplate = await readFile('scripts/office-template.html', 'utf8');

@@ -14,9 +14,9 @@ export function setNativeFullscreen(value) {
 }
 export const hasDocumentWindows = !!window.omniDesktop?.openFile;
 /** Transfer a selected file, never a filesystem path, to its own desktop window. */
-export async function openDocumentWindow(file) {
+export async function openDocumentWindow(file, resources = {}) {
   if (!hasDocumentWindows) return false;
-  await window.omniDesktop.openFile({ name: file.name, bytes: await file.arrayBuffer() });
+  await window.omniDesktop.openFile(file, resources);
   return true;
 }
 export function setNativeDocument(name) {
@@ -46,7 +46,7 @@ export async function saveOriginal(record) {
 /** Receive files explicitly opened by the OS, never arbitrary path requests. */
 export function connectNativeFiles(importFiles, onError) {
   if (window.omniDesktop) return window.omniDesktop.onFiles(async items => {
-    try { await importFiles(items.map(item => new File([item.bytes], item.name)), { local: true }); } catch (error) { onError(error); }
+    try { await importFiles(items.map(item => Object.assign(new File([item.bytes], item.name), { omniImageSource: item.imageSource, omniImages: item.images || {} })), { local: true }); } catch (error) { onError(error); }
   });
   if (!android) return;
   let busy = false;

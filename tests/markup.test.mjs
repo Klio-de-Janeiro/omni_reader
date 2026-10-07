@@ -7,7 +7,9 @@ import { openViewer } from '../dist/viewers.js';
 import { openMarkupEditor, decodeMarkup } from '../dist/markup.js';
 import { openEditor } from '../dist/editors/ui.js';
 import { validateFile, validateBytes } from '../dist/validation.js';
-import { isFullscreenShortcut, isThemeShortcut, zoomShortcut } from '../dist/shortcuts.js';
+import { isFullscreenShortcut, isThemeShortcut, zoomShortcut, shortcutCommand, getShortcutBindings, shortcutLabel } from '../dist/shortcuts.js';
+import { initShortcutSettings } from '../dist/shortcut-settings.js';
+import { createReadHighlights } from '../dist/read-highlights.js';
 import { initThemes } from '../dist/themes.js';
 
 const source = '# Заметки\n\n**Жирный** и *курсив*, ~~удалено~~. Формула $a_i^2$.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n- [x] Готово\n- [ ] Позже\n\n$$\\frac{a}{b}$$\n\n```tex\n\\int_0^1 x^2 dx\n```\n\n```python\nprint("$code$")\n```';
@@ -96,7 +98,7 @@ test('Fullscreen button edits Markdown, previews the draft and saves a copy; Ctr
   const html = await readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
   const w = new JSDOM(html, { pretendToBeVisual: true, runScripts: 'outside-only', url: 'https://omni.test/' }).window, restore = globals(w);
   const record = { id: 'one', name: 'notes.md', ext: 'md', blob: new File([source], 'notes.md'), size: new TextEncoder().encode(source).length, saved: true };
-  Object.assign(w, { File, TextEncoder, normalizeMode: v => v === 'page' ? 'page' : 'scroll', isFullscreenShortcut, isThemeShortcut, zoomShortcut, initThemes,
+  Object.assign(w, { File, TextEncoder, normalizeMode: v => v === 'page' ? 'page' : 'scroll', isFullscreenShortcut, isThemeShortcut, zoomShortcut, initThemes, shortcutCommand, getShortcutBindings, shortcutLabel, initShortcutSettings, createReadHighlights,
     copyText: async () => {}, isNative: true, hasDocumentWindows: false, saveOriginal: async () => true,
     setNativeFullscreen: () => true, setNativeDocument() {}, connectNativeFiles() {},
     listFiles: async () => [record], saveFile: async () => {}, formatSize: () => '1 B', validateFile, validateBytes, openViewer, openEditor });

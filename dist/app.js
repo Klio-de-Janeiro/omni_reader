@@ -1,24 +1,60 @@
 import { viewMode as normalizeMode } from './page-modes.js';
 import { copyText } from './clipboard.js';
 import { isNative, saveOriginal, connectNativeFiles, hasDocumentWindows, openDocumentWindow, setNativeDocument, setNativeFullscreen } from './native.js';
-import { isFullscreenShortcut, isThemeShortcut, zoomShortcut } from './shortcuts.js';
+import { shortcutCommand, getShortcutBindings, shortcutLabel } from './shortcuts.js';
+import { initShortcutSettings } from './shortcut-settings.js';
+import { createReadHighlights } from './read-highlights.js';
 import { initThemes } from './themes.js';
 import { validateFile, validateBytes, formatSize } from './validation.js';
 import { listFiles, saveFile, removeFile } from './storage.js';
 import { openViewer } from './viewers.js';
+import { attachDocumentImages, refreshDocumentImages } from './document-images.js';
 const $ = id => document.getElementById(id);
 const files = new Map();
 const sourceFormats = ['ipynb','json','yaml','yml','js','env','txt'];
 const themes = initThemes(document);
+const shortcutSettings=initShortcutSettings(document);
 let active, controller, viewer, downloadUrl, page = 1, pages = 1, zoom = 1;
 let pendingInstall, importing = false, routingFiles = false;
 let editor, editing = false, preparingEditor = false;
 let viewMode='scroll',changingViewMode=false,focusMode=false,filesHidden=false,beforeFocus=false;
+let highlightRecords=[],highlightBackend,highlightGeneration=0;
+let highlightColor='#ffe066';try{highlightColor=localStorage.getItem('omni.marker.color')||highlightColor;}catch{}
+if(!/^#[0-9a-f]{6}$/i.test(highlightColor))highlightColor='#ffe066';$('highlight-color').value=highlightColor;
+const reading=()=>!!active && (!editing || editor?.sourceMode===false);
+const readMarks=createReadHighlights($('viewer'),{canHighlight:reading,onChange:records=>{highlightRecords=records;}});
+function syncHighlights(){
+  const next=reading()?(editor?.readingViewer || viewer || readMarks):null;
+  if(next===highlightBackend)return;highlightBackend=next;const generation=++highlightGeneration;
+  readMarks.suspend(!next || !!next.setHighlights);
+  if(next?.setHighlights)void next.setHighlights(highlightRecords).catch(error=>{if(generation===highlightGeneration)showHighlightStatus(error.message,true);});
+  else if(next)readMarks.set(highlightRecords);
+}
+function resetHighlights(){highlightRecords=[];highlightBackend=undefined;highlightGeneration++;readMarks.clear();$('highlight-panel').hidden=true;}
+function showHighlightStatus(text,open=false){$('highlight-status').textContent=text;if(open)$('highlight-panel').hidden=false;}
+async function highlightSelection(){
+  if(!reading())return;
+  const current=controller,backend=highlightBackend;
+  try{
+    const records=backend?.addHighlight?await backend.addHighlight(highlightColor):readMarks.add(highlightColor);
+    if(current!==controller || current?.signal.aborted)return;
+    highlightRecords=records;showHighlightStatus('Отмечено. Маркеры исчезнут при закрытии файла.');
+  }catch(error){if(current===controller)showHighlightStatus(error.message,true);}
+}
+async function toggleEditing(){
+  if(!active || preparingEditor || changingViewMode || importing || editor?.busy)return;
+  if(!editing){await $('edit-file').onclick();return;}
+  try{await editor?.toggleView?.();syncFocusControls();}catch(error){notify(error.message,true);showHighlightStatus(error.message,true);}
+}
 function setFiles(hidden){filesHidden=hidden;document.body.classList.toggle('files-hidden',hidden);$('files-toggle').setAttribute('aria-pressed',String(hidden));}
 function shellShortcut(command){
-  if(command==='focus')setFocus(!focusMode);
+  if(command==='toggle-edit')void toggleEditing();
+  else if(command==='highlight')void highlightSelection();
+  else if(command==='shortcut-settings')shortcutSettings.open();
+  else if(command==='save'){if(editing)void saveEditedCopy(editor);else $('download').click();}
+  else if(command==='focus')setFocus(!focusMode);
   else if(command==='theme')themes.cycle();
-  else if(command==='escape'){if(focusMode)setFocus(false);else void closeViewer();}
+  else if(command==='escape'){if(!$('highlight-panel').hidden)$('highlight-panel').hidden=true;else if(focusMode)setFocus(false);else void closeViewer();}
   else if(command.startsWith('zoom-')){
     const delta=command==='zoom-reset'?null:command==='zoom-in'?0.25:-0.25;
     if(editing)void editor?.adjustZoom?.(delta);
@@ -34,6 +70,7 @@ function setFocus(value,requestNative=true){
   if(value===focusMode)return;
   if(value){beforeFocus=filesHidden;setFiles(true);}else setFiles(beforeFocus);
   focusMode=value;document.body.classList.toggle('focus-mode',value);
+  window.dispatchEvent(new CustomEvent('omni-layout-change'));
   $('focus-toggle').setAttribute('aria-pressed',String(value));
   $('focus-exit').hidden=!value;
   syncFocusControls();
@@ -110,7 +147,7 @@ async function importFiles(input, { local = false } = {}) {
       const ext = validateFile(file);
       const bytes = await file.arrayBuffer(); validateBytes(bytes, ext);
       if (files.size >= 30) throw new Error('Открыто 30 файлов. Уберите ненужный из списка.');
-      const record = { id: Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join(""), name: file.name, size: file.size, ext, blob: file, saved: false, opened: Date.now() };
+      const record = { id: Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join(""), name: file.name, size: file.size, ext, blob: file, saved: false, opened: Date.now(), images: file.omniImages || {}, imageSource: file.omniImageSource };
       if ($('remember').checked) {
         try { await saveFile(record); record.saved = true; }
         catch (error) { errors.push(`${file.name}: не сохранён. ${error.name === 'QuotaExceededError' ? 'Недостаточно места в хранилище приложения.' : error.message}`); }
@@ -138,11 +175,12 @@ function resetViewer() {
 async function selectFile(id, leaveChecked = false, initialMode='scroll', position={}, autoFocus=true) {
   const record = files.get(id); if (!record) return;
   if (hasDocumentWindows && !leaveChecked && active && active !== id) {
-    try { await openDocumentWindow(new File([record.blob],record.name)); }
+    try { await openDocumentWindow(new File([record.blob],record.name), record); }
     catch (error) { notify(error.message,true); }
     return;
   }
   if (!leaveChecked && !await canLeaveEditor()) return;
+  if(active!==id)resetHighlights();
   resetViewer(); const current = controller;
   active = id; page = 1; pages = 1; zoom = 1; viewMode=normalizeMode(initialMode);changingViewMode=false;clearMessage();
   setNativeDocument(record.name);
@@ -163,7 +201,7 @@ async function selectFile(id, leaveChecked = false, initialMode='scroll', positi
   $('viewer').innerHTML = '<div class="loading"><span class="spinner"></span><span>Открываем файл…</span></div>';
   $('viewer').setAttribute('aria-busy', 'true'); syncControls(); renderList();
   try {
-    const next = await openViewer(record.blob, $('viewer'), { ext: record.ext, signal: current.signal, viewMode, onShellShortcut:shellShortcut,
+    const next = await openViewer(record.blob, $('viewer'), { ext: record.ext, signal: current.signal, viewMode, imageRecord: record, onShellShortcut:shellShortcut,
       onPage: value => {if(!current.signal.aborted){page=value;syncControls();}},
       onZoom: value => {if(!current.signal.aborted){zoom=value;syncControls();}},
       onPages: count => { if (current.signal.aborted) return; pages = count; $('pagination').hidden = false; syncControls(); },
@@ -187,14 +225,22 @@ async function selectFile(id, leaveChecked = false, initialMode='scroll', positi
   }
 }
 function syncFocusControls() {
-  const ext=files.get(active)?.ext,source=ext==='md' || sourceFormats.includes(ext),image=['png','jpg','jpeg'].includes(ext),editable=source || image;
+  const ext=files.get(active)?.ext,image=['png','jpg','jpeg'].includes(ext),editable=!!ext && ext!=='tex';
+  const canMark=reading() && ['pdf','docx','pptx','xlsx','csv','md','tex',...sourceFormats].includes(ext);
   $('focus-actions').hidden=!focusMode;
+  const markdownImages = ['md','tex','ipynb'].includes(ext);
+  $('document-images').hidden=!markdownImages; $('focus-images').hidden=!focusMode || !markdownImages;
   $('focus-edit').hidden=!focusMode || !editable;
   $('focus-edit').disabled=preparingEditor || changingViewMode || importing || (editing? !editor || editor.busy : !viewer);
-  $('focus-edit').textContent=image?(editing?'Инструменты':'Рисовать'):editing && editor?.sourceMode?'Просмотр':'Редактировать';
+  $('focus-edit').textContent=image?(editing?(editor?.sourceMode?'Инструменты':'Редактировать'):'Рисовать'):editing && editor?.sourceMode?'Просмотр':'Редактировать';
+  $('focus-edit').title=image && editing && editor?.sourceMode?'Показать или скрыть инструменты':getShortcutBindings(window)['toggle-edit'].map(shortcutLabel).join(' / ');
   $('focus-edit').setAttribute('aria-pressed',String(editing && !!editor?.sourceMode));
   $('focus-save').hidden=!focusMode || !editable || !editing;
   $('focus-save').disabled=!editor || editor.busy || !editor.dirty;
+  $('focus-highlight').hidden=!focusMode || !canMark;$('highlight-button').hidden=!canMark;
+  $('focus-highlight').disabled=$('highlight-button').disabled=preparingEditor || changingViewMode || importing || !!editor?.busy;
+  if(!reading())$('highlight-panel').hidden=true;
+  syncHighlights();
 }
 function syncControls() {
   syncFocusControls();
@@ -221,14 +267,28 @@ async function setViewMode(value){
   const current=controller,next=normalizeMode(value);changingViewMode=true;syncControls();
   try{await viewer.setViewMode(next);if(!current.signal.aborted)viewMode=next;}catch(error){if(!current.signal.aborted)notify(error.message,true);}finally{if(!current.signal.aborted){changingViewMode=false;syncControls();}}
 }
-async function closeViewer() { if (!await canLeaveEditor()) return; setFocus(false); resetViewer(); active = null; setNativeDocument(null); $('reader').hidden = true; $('welcome').hidden = false; renderList(); }
+async function closeViewer() { if (!await canLeaveEditor()) return; resetHighlights();setFocus(false); resetViewer(); active = null; setNativeDocument(null); $('reader').hidden = true; $('welcome').hidden = false; renderList(); }
 async function discard(id) {
   if (active === id && !await canLeaveEditor()) return;
-  try { if (files.get(id)?.saved) await removeFile(id); if (active === id) { setFocus(false); resetViewer(); active = null; setNativeDocument(null); $('reader').hidden = true; $('welcome').hidden = false; } files.delete(id); renderList(); }
+  try { if (files.get(id)?.saved) await removeFile(id); if (active === id) { resetHighlights();setFocus(false); resetViewer(); active = null; setNativeDocument(null); $('reader').hidden = true; $('welcome').hidden = false; } files.delete(id); renderList(); }
   catch { notify('Не удалось удалить сохранённую копию. Попробуйте ещё раз.', true); }
 }
 for (const button of document.querySelectorAll('.open-button')) button.onclick = () => $('file-input').click();
 $('file-input').onchange = event => void importFiles(event.target.files);
+for (const id of ['document-images','focus-images']) $(id).onclick = () => $('document-images-input').click();
+$('document-images-input').onchange = async event => {
+  const record = files.get(active); if (!record) return;
+  try { await attachDocumentImages(record, Array.from(event.target.files), window); }
+  catch (error) { notify(error.message, true); }
+  finally { event.target.value = ''; }
+};
+let imageSaving = Promise.resolve();
+window.addEventListener('omni-images-changed', event => {
+  const record = event.detail;
+  if (files.get(record?.id) !== record) return;
+  if (record.id === active) refreshDocumentImages($('viewer'), record);
+  if (record.saved) imageSaving = imageSaving.catch(() => {}).then(() => saveFile(record)).catch(error => notify(`Изображения не сохранены: ${error.message}`, true));
+});
 $('dropzone').onclick = () => $('file-input').click();
 $('dropzone').onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); $('file-input').click(); } };
 for (const name of ['dragenter', 'dragover']) document.addEventListener(name, event => { event.preventDefault(); $('dropzone').classList.add('dragging'); });
@@ -245,29 +305,17 @@ $('zoom-out').onclick = () => void setZoom(zoom - 0.25); $('zoom-in').onclick = 
 $('rotate').onclick = () => viewer?.rotate?.();
 $('help').onclick = () => $('help-dialog').showModal(); $('help-close').onclick = () => $('help-dialog').close();
 document.addEventListener('keydown',event=>{
-  if(isThemeShortcut(event)){event.preventDefault();event.stopImmediatePropagation();if(!event.repeat)themes.cycle();return;}
-  const scaleCommand=zoomShortcut(event);
-  if(scaleCommand && active && !$('help-dialog').open && !$('discard-dialog').open && !$('theme-dialog').open){
-    event.preventDefault();event.stopImmediatePropagation();shellShortcut(scaleCommand);return;
-  }
-  if(isFullscreenShortcut(event) && active && !$('help-dialog').open && !$('discard-dialog').open && !$('theme-dialog').open){
+  if(document.querySelector('dialog[open]'))return;
+  const command=shortcutCommand(event);if(!command)return;
+  const always=['theme','shortcut-settings'],actions=['focus','escape','toggle-edit','highlight','next','previous'];
+  if(!always.includes(command) && !active)return;
+  const typing=event.target.closest?.('input,textarea,select,[contenteditable="true"]');
+  if(['next','previous'].includes(command) && typing && !event.ctrlKey && !event.altKey && !event.metaKey)return;
+  if(always.includes(command) || actions.includes(command) || command.startsWith('zoom-') || command==='save' && editing && editor?.sourceMode===false){
     event.preventDefault();event.stopImmediatePropagation();
-    if(!event.repeat)setFocus(!focusMode);
-    return;
-  }
-  if(event.key==='Escape' && !$('help-dialog').open && !$('discard-dialog').open && !$('theme-dialog').open && active){
-    if(focusMode){event.preventDefault();setFocus(false);}else closeViewer();
+    if(!event.repeat || command.startsWith('zoom-') || ['next','previous'].includes(command))shellShortcut(command);
   }
 },true);
-// Fullscreen has no navigation bar: PgUp/PgDn or Alt+arrows turn pages.
-document.addEventListener('keydown',event=>{
-  if(!focusMode || event.defaultPrevented || event.ctrlKey || event.metaKey)return;
-  const typing=event.target.closest?.('input,textarea,select,[contenteditable="true"]');
-  let delta=0;
-  if(event.altKey && event.key==='ArrowLeft' || !typing && event.key==='PageUp')delta=-1;
-  if(event.altKey && event.key==='ArrowRight' || !typing && event.key==='PageDown')delta=1;
-  if(delta){event.preventDefault();shellShortcut(delta>0?'next':'previous');}
-});
 addEventListener('beforeinstallprompt', event => { event.preventDefault(); pendingInstall = event; $('install').hidden = false; });
 $('install').onclick = async () => { if (!pendingInstall) return; await pendingInstall.prompt(); pendingInstall = null; $('install').hidden = true; };
 addEventListener('appinstalled', () => { $('install').hidden = true; });
@@ -355,7 +403,7 @@ async function saveEditedCopy(session) {
     do { name = `${base}-edited-${number++}.${source.ext}`; } while ([...files.values()].some(file => file.name === name));
     const blob = new File([bytes], name); const ext = validateFile(blob); validateBytes(await blob.arrayBuffer(), ext);
     if (files.size >= 30) throw new Error('Открыто 30 файлов. Освободите место в списке перед сохранением копии.');
-    const record = { id: crypto.randomUUID(), name, size: blob.size, ext, blob, saved: false, opened: Date.now() };
+    const record = { id: crypto.randomUUID(), name, size: blob.size, ext, blob, saved: false, opened: Date.now(), images: { ...source.images }, imageSource: source.imageSource };
     if ($('remember').checked) { await saveFile(record); record.saved = true; }
     files.set(record.id, record); session.setBusy(false); editor.dispose(); editor = null;
     await selectFile(record.id, true, viewMode, session.position);
@@ -364,14 +412,10 @@ async function saveEditedCopy(session) {
     else { const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 60000); }
   } catch (error) { session.setBusy(false);syncFocusControls();notify(error.message || 'Не удалось сохранить копию.', true); }
 }
-$('focus-edit').onclick=()=>{
-  if(editing && editor?.toggleView){editor.toggleView();syncFocusControls();}
-  else if(editing && editor?.toggleTools){editor.toggleTools();syncFocusControls();}
-  else void $('edit-file').onclick();
-};
+$('focus-edit').onclick=()=>{if(editing && editor?.sourceMode && editor?.toggleTools)editor.toggleTools();else return toggleEditing();};
 $('focus-save').onclick=()=>void saveEditedCopy(editor);
 $('edit-file').onclick = async () => {
-  if (editing || preparingEditor || changingViewMode || !active) return;
+  if (editing || preparingEditor || changingViewMode || !active || files.get(active)?.ext==='tex') return;
   const record = files.get(active), initialPage=page, initialZoom=zoom; resetViewer(); editing = true; preparingEditor = true;
   const current = controller;
   $('pagination').hidden = true; $('zoom-controls').hidden = true; $('text-tools').hidden = true; $('office-note').hidden = true; $('rotate').hidden = true; $('edit-file').hidden = true;
@@ -381,7 +425,7 @@ $('edit-file').onclick = async () => {
   syncControls();
   try {
     const { openEditor } = await import('./editors/ui.js');
-    const next = await openEditor(record, $('viewer'), { signal: current.signal, viewMode,initialPage,initialZoom,onShellShortcut:shellShortcut,onViewMode:value=>{viewMode=value;}, onDirty:()=>syncFocusControls(), onSave: saveEditedCopy, onClose: () => selectFile(record.id,false,viewMode,editor?.position,false), onError: error => notify(error.message, true) });
+    const next = await openEditor(record, $('viewer'), { signal: current.signal, viewMode,getViewMode:()=>viewMode,initialPage,initialZoom,onShellShortcut:shellShortcut,onViewMode:value=>{viewMode=value;}, onDirty:()=>syncFocusControls(), onSave: saveEditedCopy, onClose: () => selectFile(record.id,false,viewMode,editor?.position,false), onError: error => notify(error.message, true) });
     if(current.signal.aborted){next.dispose();return;}editor=next;
     preparingEditor = false; $('viewer').setAttribute('aria-busy', 'false');syncControls();
   } catch (error) { preparingEditor = false; await selectFile(record.id, true); notify(error.message || 'Редактор пока не поддерживает этот файл.', true); }
@@ -389,3 +433,21 @@ $('edit-file').onclick = async () => {
 addEventListener('beforeunload', event => {
   if (editor?.dirty || editor?.busy) { event.preventDefault(); event.returnValue = ''; }
 });
+
+for(const id of ['focus-highlight','highlight-button']){
+  $(id).onmousedown=event=>{event.preventDefault();readMarks.capture();};
+  $(id).onclick=()=>{$('highlight-panel').hidden=!$('highlight-panel').hidden;showHighlightStatus('Выделите текст, выберите цвет и нажмите «Отметить» или сочетание маркера.');};
+}
+$('highlight-apply').onmousedown=event=>event.preventDefault();$('highlight-apply').onclick=highlightSelection;
+$('highlight-close').onclick=()=>{$('highlight-panel').hidden=true;};
+function setHighlightColor(value){if(!/^#[0-9a-f]{6}$/i.test(value))return;highlightColor=value;$('highlight-color').value=value;try{localStorage.setItem('omni.marker.color',value);}catch{}for(const b of document.querySelectorAll('[data-marker-color]'))b.setAttribute('aria-pressed',String(b.dataset.markerColor===value));}
+$('highlight-color').oninput=event=>setHighlightColor(event.target.value);
+for(const button of document.querySelectorAll('[data-marker-color]')){button.onmousedown=event=>event.preventDefault();button.onclick=()=>setHighlightColor(button.dataset.markerColor);}
+$('highlight-clear').onclick=async()=>{const current=controller;highlightRecords=[];readMarks.clear();try{await highlightBackend?.clearHighlights?.();if(current===controller)showHighlightStatus('Маркеры удалены.');}catch(error){if(current===controller)showHighlightStatus(error.message,true);}};
+function syncShortcutLabels(){
+  const values=getShortcutBindings(window),hint=command=>values[command].map(shortcutLabel).join(' / ');
+  for(const [id,command] of [['focus-toggle','focus'],['focus-highlight','highlight'],['highlight-button','highlight'],['focus-save','save'],['zoom-in','zoom-in'],['zoom-out','zoom-out'],['fit','zoom-reset'],['hotkeys-settings','shortcut-settings']])$(id).title=hint(command);
+  const exit=hint('escape');$('focus-exit').textContent=exit?'Выйти · '+exit:'Выйти';
+  syncFocusControls();
+}
+window.addEventListener('omni-shortcuts-change',syncShortcutLabels);syncShortcutLabels();setHighlightColor(highlightColor);

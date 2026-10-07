@@ -1,12 +1,16 @@
 const { app, BrowserWindow, protocol, ipcMain, dialog } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { readDocumentImage } = require('./document-images.cjs');
+// Match the installer shortcut identity so Windows groups and pins Omni correctly.
+if (process.platform === 'win32') app.setAppUserModelId('dev.klio.omni');
 const ALLOWED = new Set(['.pdf', '.docx', '.pptx', '.xlsx', '.csv', '.wav', '.jpg', '.jpeg', '.png', '.md', '.tex', '.ipynb', '.json', '.yaml', '.yml', '.js', '.env', '.txt']);
 const allowedName = name => ALLOWED.has(path.extname(name).toLowerCase()) || path.basename(name).toLowerCase() === '.env';
 const MAX = 100 * 1024 * 1024;
 const APP_URL = 'omni://app/index.html';
 const windows = new Map(), pending = [];
 let ready = false, osQueue = Promise.resolve();
+let imageSequence = 0;
 protocol.registerSchemesAsPrivileged([{ scheme: 'omni', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 const locked = app.requestSingleInstanceLock();
 if (!locked) app.quit();
@@ -25,13 +29,15 @@ function deliver(state) {
 function createWindow() {
   const root = path.join(__dirname, 'www');
   const window = new BrowserWindow({ width: 1380, height: 920, minWidth: 390, minHeight: 620, backgroundColor: '#020611', icon: path.join(root, 'icon-192.png'), autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
-  const state = { window, loaded: false, occupied: false, pending: null };
+  const state = { window, loaded: false, occupied: false, pending: null, imageSources: new Map() };
   const id = window.webContents.id;
   windows.set(id, state);
   window.on('closed', () => windows.delete(id));
   window.webContents.on('did-start-navigation', details => { if (details.isMainFrame) state.loaded = false; });
   window.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // Renderer commands own their configurable bindings, including Ctrl+Z and zoom.
+  window.webContents.setIgnoreMenuShortcuts(true);
   // Document gestures own scaling; do not zoom the application chrome.
   void window.webContents.setVisualZoomLevelLimits(1, 1).catch(() => {});
   window.webContents.on('will-prevent-unload', event => {
@@ -46,7 +52,12 @@ function createWindow() {
 /** Reserve an empty window before asynchronous file delivery; occupied windows stay intact. */
 function openFile(file, preferred) {
   const state = preferred && !preferred.occupied ? preferred : [...windows.values()].find(item => !item.occupied) || createWindow();
-  state.occupied = true; state.pending = file;
+  const imageBase = file.sourcePath ? path.dirname(file.sourcePath) : file.imageBase;
+  let imageSource;
+  if (imageBase && ['.md','.tex','.ipynb'].includes(path.extname(file.name).toLowerCase())) {
+    imageSource = 'document-' + (++imageSequence); state.imageSources.set(imageSource, imageBase);
+  }
+  state.occupied = true; state.pending = { name: file.name, bytes: file.bytes, imageSource, images: file.images || {} };
   state.window.setTitle(file.name + ' — Omni');
   deliver(state);
   if (state.window.isMinimized()) state.window.restore();
@@ -61,7 +72,7 @@ function queueFiles(args) {
       try {
         const resolved = path.resolve(name), stat = await fs.stat(resolved);
         if (!stat.isFile() || stat.size > MAX) continue;
-        const file = { name: path.basename(resolved), bytes: await fs.readFile(resolved) };
+        const file = { name: path.basename(resolved), bytes: await fs.readFile(resolved), sourcePath: resolved };
         if (ready) openFile(file); else pending.push(file);
       } catch { /* Invalid OS arguments do not block the other files. */ }
     }
@@ -90,7 +101,19 @@ if (locked) app.whenReady().then(async () => {
   ipcMain.handle('omni-open-file', (event, input) => {
     const state = senderState(event);
     if (!input || !(input.bytes instanceof ArrayBuffer) || input.bytes.byteLength > MAX || typeof input.name !== 'string' || !allowedName(input.name)) throw new Error('Invalid file import');
-    return openFile({ name: path.basename(input.name), bytes: Buffer.from(input.bytes) }, state);
+    const file = { name: path.basename(input.name), bytes: Buffer.from(input.bytes), images: input.images || {}, imageBase: state.imageSources.get(input.imageSource) };
+    // sourcePath is supplied exclusively by preload's getPathForFile(File), not by page text.
+    if (typeof input.sourcePath === 'string' && input.sourcePath) return (async () => {
+      const sourcePath = await fs.realpath(input.sourcePath), stat = await fs.stat(sourcePath);
+      if (!stat.isFile() || stat.size > MAX || path.basename(sourcePath) !== file.name) throw new Error('Invalid selected file');
+      file.bytes = await fs.readFile(sourcePath); if (file.bytes.length > MAX) throw new Error('Selected file is too large'); file.sourcePath = sourcePath;
+      return openFile(file, state);
+    })();
+    return openFile(file, state);
+  });
+  ipcMain.handle('omni-read-image', (event, source, relative) => {
+    const state = senderState(event), base = state.imageSources.get(source);
+    return base ? readDocumentImage(base, relative) : null;
   });
   ipcMain.handle('omni-document', (event, name) => {
     const state = senderState(event);

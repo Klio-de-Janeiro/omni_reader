@@ -3,6 +3,7 @@ import { captureZoomAnchor, bindZoomGestures } from './gestures.js';
 import { editingShortcut } from './shortcuts.js';
 import { History } from './editors/history.js';
 import { LIMITS } from './validation.js';
+import { colorCode, colorInput } from './syntax.js';
 
 export const makeNode = (document, tag, className, text) => {
   const node = document.createElement(tag);
@@ -70,37 +71,30 @@ export function renderText(source, ext, document) {
     catch (error) { fragment.append(makeNode(document, 'p', 'source-notice', `${error.message}. Можно исправить в редакторе.`)); }
   }
   const pre = makeNode(document, 'pre', 'source-preview');
-  pre.append(makeNode(document, 'code', `language-${ext}`, display || ''));
+  const code=makeNode(document, 'code', `language-${ext}`);colorCode(code,display||'',ext);pre.append(code);
   fragment.append(pre); return fragment;
 }
 
 /** Share selectable text search between source files and notebook cells. */
 export function textNavigation(article) {
   const document = article.ownerDocument, window = document.defaultView;
-  let previousQuery = '', previousNode = null, previousOffset = -1;
+  let previousQuery = '', previousOffset = -1;
   return {
     copyText: () => window.getSelection()?.toString() || '',
     find(query) {
       const needle = query.toLocaleLowerCase(); if (!needle) return null;
       const walker = document.createTreeWalker(article, window.NodeFilter.SHOW_TEXT), nodes = [];
-      let node;
+      let node,text='';
       while (node = walker.nextNode()) {
-        if (!node.parentElement.closest('textarea,button,.katex-mathml,annotation,[hidden]')) nodes.push(node);
+        if (!node.parentElement.closest('textarea,button,.katex-mathml,annotation,[hidden],[aria-hidden="true"]')) {nodes.push({node,start:text.length,end:text.length+node.length});text+=node.textContent;}
       }
-      const start = previousQuery === needle ? nodes.indexOf(previousNode) : -1;
-      const match = (index, offset) => {
-        const current = nodes[index], at = current.textContent.toLocaleLowerCase().indexOf(needle, offset);
-        if (at < 0) return null;
-        const range = document.createRange(); range.setStart(current, at); range.setEnd(current, at + query.length);
-        const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
-        current.parentElement.scrollIntoView?.({ block: 'center' });
-        previousQuery = needle; previousNode = current; previousOffset = at;
-        return { message: 'Совпадение найдено' };
-      };
-      if (start >= 0) { const result = match(start, previousOffset + query.length); if (result) return result; }
-      for (let i = start + 1; i < nodes.length; i++) { const result = match(i, 0); if (result) return result; }
-      for (let i = 0; i <= start; i++) { const result = match(i, 0); if (result) return result; }
-      return null;
+      const folded=text.toLocaleLowerCase(),start=previousQuery===needle?previousOffset+needle.length:0;
+      let at=folded.indexOf(needle,start);if(at<0 && start)at=folded.indexOf(needle);if(at<0)return null;
+      const first=nodes.find(part=>at>=part.start && at<part.end),last=nodes.find(part=>at+query.length>part.start && at+query.length<=part.end);
+      if(!first || !last)return null;
+      const range=document.createRange();range.setStart(first.node,at-first.start);range.setEnd(last.node,at+query.length-last.start);
+      const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);first.node.parentElement.scrollIntoView?.({block:'center'});
+      previousQuery=needle;previousOffset=at;return {message:'Совпадение найдено'};
     }
   };
 }
@@ -137,6 +131,7 @@ export async function openTextEditor(record, root, options, custom = {}) {
   input.maxLength = LIMITS[record.ext] * 1024 * 1024; input.setAttribute('aria-label', `Исходный текст ${record.ext.toUpperCase()}`);
   const article = node('article', custom.articleClass || 'source-document'); article.hidden = true;
   canvas.append(input, article); panel.append(bar, status, canvas); root.replaceChildren(panel);
+  const colors=colorInput(input,record.ext,{signal});
   const history = new History(); let sourceMode = true, busy = false, disposed = false, zoom = initialZoom, draft = original;
   let selection = { start: 0, end: 0 }, api;
   const render = () => article.replaceChildren(custom.render ? custom.render(input.value) : renderText(input.value, record.ext, document));
@@ -147,19 +142,20 @@ export async function openTextEditor(record, root, options, custom = {}) {
     undo.disabled = busy || !history.done.length; redo.disabled = busy || !history.future.length;
     save.disabled = busy || input.value === original; preview.textContent = sourceMode ? 'Просмотр' : 'Редактировать';
     onDirty?.(input.value !== original);
+    colors.refresh();
   }
   const guarded = action => async () => { if (busy || disposed) return; try { await action(); } catch (error) { onError?.(error); } };
   function toggleView() {
     if (busy || disposed) return;
     if (sourceMode) render();
-    sourceMode = !sourceMode; input.hidden = !sourceMode; article.hidden = sourceMode;
+    sourceMode = !sourceMode; input.hidden = !sourceMode; colors.wrap.hidden=!sourceMode; article.hidden = sourceMode;
     update(); if (sourceMode) input.focus({ preventScroll: true });
   }
   function setZoom(value, point) {
     if (disposed) return;
     const restore = captureZoomAnchor(() => [sourceMode ? input : article], canvas, point);
     zoom = Math.max(0.5, Math.min(3, value));
-    input.style.fontSize = `${16 * zoom}px`; article.style.fontSize = `${16 * zoom}px`; restore();
+    input.style.fontSize = `${16 * zoom}px`; article.style.fontSize = `${16 * zoom}px`; colors.refresh();restore();
   }
   api = {
     get dirty() { return input.value !== original; }, get busy() { return busy; }, get sourceMode() { return sourceMode; },
@@ -173,7 +169,7 @@ export async function openTextEditor(record, root, options, custom = {}) {
     },
     toggleView, setBusy(value) { busy = !!value; update(); },
     adjustZoom: delta => setZoom(delta === null ? 1 : zoom + delta),
-    dispose() { if (disposed) return; disposed = true; gestures.dispose(); }
+    dispose() { if (disposed) return; disposed = true; gestures.dispose();colors.dispose(); }
   };
   const gestures = bindZoomGestures(canvas, { signal, getZoom: () => zoom, setZoom, onError });
   history.onChange = () => { status.hidden = true; if (!sourceMode) render(); update(); };

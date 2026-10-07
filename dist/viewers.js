@@ -6,6 +6,7 @@ import { openText } from './text-files.js';
 import { openNotebook } from './notebooks.js';
 import { TEXT_EXTENSIONS } from './validation.js';
 import { documentTheme } from './themes.js';
+import { getShortcutBindings } from './shortcuts.js';
 /** Build a DOM node without interpreting file content as markup. */
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -38,8 +39,10 @@ async function openOffice(file, root, context) {
   let selectedText='',requestId=0,initialized=false;const requests=new Map();
   const post=(data,transfer=[])=>frame.contentWindow?.postMessage({...data,token},'*',transfer);
   const theme = () => post({type:'theme',theme:documentTheme(root.ownerDocument)});
+  const shortcuts=()=>post({type:'shortcuts',bindings:getShortcutBindings(root.ownerDocument.defaultView)});
   root.ownerDocument.defaultView.addEventListener('omni-theme-change',theme);
-  context.signal.addEventListener('abort',()=>root.ownerDocument.defaultView.removeEventListener('omni-theme-change',theme),{once:true});
+  root.ownerDocument.defaultView.addEventListener('omni-shortcuts-change',shortcuts);
+  context.signal.addEventListener('abort',()=>{root.ownerDocument.defaultView.removeEventListener('omni-theme-change',theme);root.ownerDocument.defaultView.removeEventListener('omni-shortcuts-change',shortcuts);},{once:true});
   const rpc=data=>new Promise((resolve,reject)=>{
     if(context.signal.aborted){reject(new DOMException('Aborted','AbortError'));return;}
     const id=++requestId,timer=setTimeout(()=>{requests.delete(id);reject(new Error('Документ не ответил. Повторите действие.'));},15000);
@@ -50,7 +53,7 @@ async function openOffice(file, root, context) {
     const timeout=setTimeout(()=>reject(new Error('Просмотр занял больше 30 секунд.')),30000);
     listener=event=>{
       if(event.source!==frame.contentWindow || !event.data)return;const data=event.data;
-      if(data.type==='ready' && !initialized){initialized=true;post({type:'open',ext:context.ext,buffer,viewMode:context.viewMode,blocks:context.blocks},[buffer]);return;}
+      if(data.type==='ready' && !initialized){initialized=true;post({type:'open',ext:context.ext,buffer,viewMode:context.viewMode,blocks:context.blocks,bindings:getShortcutBindings(root.ownerDocument.defaultView)},[buffer]);return;}
       if(data.token!==token)return;
       if(data.type==='loaded'){clearTimeout(timeout);theme();context.onPages?.(data.pages);resolve();}
       if(data.type==='selection')selectedText=data.text;
@@ -78,6 +81,7 @@ async function openOffice(file, root, context) {
     flush:()=>rpc({type:'flush'}),command:data=>post({type:'edit-command',...data}),
     sync:blocks=>post({type:'edit-sync',blocks}),setBusy:busy=>post({type:'edit-busy',busy}),
     copyText:()=>selectedText,
+    addHighlight:color=>rpc({type:'highlight-add',color}),setHighlights:records=>rpc({type:'highlight-set',records}),clearHighlights:()=>rpc({type:'highlight-clear'}),
   };
 }
 /** Show images with fit-to-width scaling and quarter-turn rotation. */

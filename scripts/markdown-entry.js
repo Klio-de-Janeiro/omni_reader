@@ -1,6 +1,8 @@
 import { Marked } from '../vendor-sources/marked/marked.esm.js';
 import katex from '../vendor-sources/katex/dist/katex.mjs';
 import createDOMPurify from '../vendor-sources/dompurify/purify.es.mjs';
+import { colorCode } from '../dist/syntax.js';
+import { relativeImagePath } from '../dist/image-paths.js';
 
 const escape = value => String(value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
 const htmlTags = new Set(['br', 'hr', 'p', 'div', 'span', 'u', 'sub', 'sup', 'b', 'i', 'strong', 'em', 's', 'del', 'blockquote', 'pre', 'code', 'details', 'summary', 'table', 'thead', 'tbody', 'tr', 'td', 'th', 'ul', 'ol', 'li']);
@@ -41,13 +43,14 @@ parser.use({
     checkbox: token => token.checked ? '☑ ' : '☐ ',
     code(token) {
       if (['math', 'tex', 'latex'].includes(token.lang?.trim().toLowerCase())) return math(token.text, true) + '\n';
-      return `<pre><code>${escape(token.text)}</code></pre>\n`;
+      const language=/^[\w#+.-]{1,40}$/.test(token.lang?.trim()||'')?token.lang.trim():'text';
+      return `<pre><code data-code-language="${escape(language)}">${escape(token.text)}</code></pre>\n`;
     }
   }
 });
 
 /** Render local Markdown/math without executing HTML or requesting file resources. */
-export function renderMarkup(source, ext, window) {
+export function renderMarkup(source, ext, window, options = {}) {
   source = source.replace(/^\uFEFF/, '');
   const standaloneMath = ext === 'tex' && !/\\(?:documentclass|begin\{document\}|usepackage)|\$|\\[\[(]|^\s*```/m.test(source)
     && /[\\^_=]/.test(source);
@@ -57,6 +60,7 @@ export function renderMarkup(source, ext, window) {
     FORBID_ATTR: ['id', 'name', 'srcset', 'formaction', 'autofocus']
   });
   for (const node of clean.querySelectorAll('*')) {
+    const imageSource = node.tagName === 'IMG' ? node.getAttribute('src') : null;
     if (!node.closest('.katex')) {
       const align = node.style?.textAlign;
       node.removeAttribute('style'); node.removeAttribute('class');
@@ -64,15 +68,25 @@ export function renderMarkup(source, ext, window) {
     }
     for (const attr of ['href', 'xlink:href', 'src', 'poster', 'background']) {
       if (!node.hasAttribute(attr)) continue;
-      if (node.tagName === 'IMG' && attr === 'src' && /^data:image\/(?:png|jpeg|gif|webp);base64,/i.test(node.getAttribute(attr))) continue;
+      if (node.tagName === 'IMG' && attr === 'src' && /^data:image\/(?:png|jpeg|gif|webp|bmp|avif);base64,/i.test(node.getAttribute(attr))) continue;
       node.removeAttribute(attr);
     }
     if (node.tagName === 'IMG' && !node.hasAttribute('src')) {
       const placeholder = window.document.createElement('span');
       placeholder.className = 'markdown-image-placeholder'; placeholder.textContent = node.getAttribute('alt') || 'Изображение';
+      const imagePath = relativeImagePath(imageSource);
+      if (imagePath) {
+        placeholder.dataset.imagePath = imagePath; placeholder.dataset.imageAlt = node.getAttribute('alt') || '';
+        placeholder.title = imagePath; placeholder.textContent += ` · ${imagePath}`;
+        if (options.resolveImage) void Promise.resolve().then(() => options.resolveImage(imagePath)).then(data => {
+          if (typeof data !== 'string' || !/^data:image\/(?:png|jpeg|gif|webp|bmp|avif);base64,[A-Za-z0-9+/]+=*$/i.test(data)) return;
+          node.src = data; placeholder.replaceWith(node);
+        }).catch(() => {});
+      }
       node.replaceWith(placeholder);
     }
   }
+  for(const code of clean.querySelectorAll('pre code[data-code-language]'))colorCode(code,code.textContent,code.dataset.codeLanguage);
   if (/\\(?:documentclass|begin\{document\})/.test(source)) {
     const note = window.document.createElement('p'); note.className = 'markup-note';
     note.textContent = 'Поддерживаются формулы LaTeX и Markdown-блоки. Полный TeX-проект с пакетами и вёрсткой нужно компилировать в PDF.';

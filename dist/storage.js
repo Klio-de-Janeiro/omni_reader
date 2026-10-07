@@ -26,6 +26,8 @@ export const removeFile = id => transact('readwrite', store => store.delete(id))
 export async function saveFile(record) {
   const files = await listFiles();
   const other = files.filter(file => file.id !== record.id);
-  if (other.length >= 20 || other.reduce((sum, file) => sum + file.size, 0) + record.size > 256 * 1024 * 1024) throw new Error('Лимит сохранения: 20 файлов или 256 МиБ. Удалите ненужную копию из списка.');
-  await transact('readwrite', store => store.put(record));
+  const storedSize = file => file.size + Object.values(file.images || {}).reduce((sum, data) => sum + String(data).length * 2, 0);
+  if (other.length >= 20 || other.reduce((sum, file) => sum + storedSize(file), 0) + storedSize(record) > 256 * 1024 * 1024) throw new Error('Лимит сохранения: 20 файлов или 256 МиБ. Удалите ненужную копию из списка.');
+  // Native source tokens belong to this application session, unlike embedded images.
+  await transact('readwrite', store => store.put({ ...record, imageSource: undefined }));
 }

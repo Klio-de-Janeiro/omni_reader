@@ -1,4 +1,4 @@
-import { editingShortcut } from '../dist/shortcuts.js';
+import { editingShortcut, formattingShortcut, shortcutCommand } from '../dist/shortcuts.js';
 const keys = ['bold','italic','underline','strike'];
 const copy = value => structuredClone(value);
 const length = n => n.nodeType === 3 ? n.data.length : n.nodeName === 'BR' ? 1 : [...n.childNodes].reduce((sum,c)=>sum+length(c),0);
@@ -132,11 +132,10 @@ export function createInlineEditor(blocks, send) {
     el.addEventListener('keydown',event=>{
       const action=editingShortcut(event);
       if(action){event.preventDefault();send({type:'edit-shortcut',command:action});return;}
-      if((event.ctrlKey || event.metaKey) && !event.altKey){
-        const k=event.key.toLowerCase(), style=({b:'bold',i:'italic',u:'underline'})[k] || (event.shiftKey && k==='x'?'strike':null);
-        if(style){event.preventDefault();capture();format(style);}
-        else if(event.key==='Enter'){event.preventDefault();send({type:'edit-shortcut',command:b.path.startsWith('ppt/')?(event.shiftKey?'section':'slide'):'page'});}
-      }else if(event.ctrlKey && event.altKey && event.key.toLowerCase()==='n'){event.preventDefault();send({type:'edit-shortcut',command:'slide'});}
+      const style=formattingShortcut(event);if(style){event.preventDefault();capture();format(style);return;}
+      const command=shortcutCommand(event),ppt=b.path.startsWith('ppt/');
+      const insert=({'insert-page':ppt?'slide':'page','insert-section':ppt?'section':'page','insert-slide':ppt?'slide':null})[command];
+      if(insert){event.preventDefault();send({type:'edit-shortcut',command:insert});}
     });
     if(pendingBookmark?.id===b.id && !busy){const book=pendingBookmark;pendingBookmark=null;restore(book);}
     else if(saved?.id===b.id && !busy)restore(saved);
