@@ -4,6 +4,7 @@ node_modules/
 test-results/
 
 .tools/
+release/
 android/.gradle/
 android/local.properties
 android/**/build/
