@@ -1,15 +1,19 @@
 import { viewMode, trackPages } from './page-modes.js';
-import { captureZoomAnchor } from './gestures.js';
+import { captureZoomAnchor, createZoomSpace } from './gestures.js';
 /** Keep page placeholders in scroll mode, but rasterize only nearby pages. */
 export async function renderPdfDocument(doc,pdfjs,root,context) {
   let mode=viewMode(context.viewMode),page=1,zoom=1,revision=0,navigating=false,closed=false,queue=Promise.resolve(),paintQueue=Promise.resolve(),lastQuery='',foundPage=0;
   const cache=new Map(),live=new Map(),papers=[];
   const first=await doc.getPage(1),base=first.getViewport({scale:1});first.cleanup?.();
   root.classList.add('pdf-document');root.dataset.viewMode=mode;root.replaceChildren();
-  const factor=()=>Math.max(0.1,Math.min((root.clientWidth-40)/base.width,1.6))*zoom;
+  const layoutWidth=()=>root.getBoundingClientRect().width || root.clientWidth;
+  const layoutHeight=()=>root.getBoundingClientRect().height || root.clientHeight;
+  const stack=document.createElement('div');stack.className='pdf-pages';stack.style.width=Math.max(1,layoutWidth()-40)+'px';root.append(stack);
+  const space=createZoomSpace(root,stack,{signal:context.signal});
+  const factor=()=>Math.max(0.1,Math.min((layoutWidth()-40)/base.width,1.6))*zoom;
   function size(paper,viewport){paper.style.width=viewport.width+'px';paper.style.height=viewport.height+'px';}
   for(let i=1;i<=doc.numPages;i++){
-    const paper=document.createElement('div');paper.className='pdf-paper';paper.dataset.page=i;paper.setAttribute('aria-label','Страница PDF '+i);paper.setAttribute('aria-busy','true');size(paper,{width:base.width*factor(),height:base.height*factor()});papers.push(paper);root.append(paper);
+    const paper=document.createElement('div');paper.className='pdf-paper';paper.dataset.page=i;paper.setAttribute('aria-label','Страница PDF '+i);paper.setAttribute('aria-busy','true');size(paper,{width:base.width*factor(),height:base.height*factor()});papers.push(paper);stack.append(paper);
   }
   function display(){root.dataset.viewMode=mode;for(const paper of papers)paper.hidden=mode==='page' && Number(paper.dataset.page)!==page;}
   function release(number){
@@ -23,9 +27,10 @@ export async function renderPdfDocument(doc,pdfjs,root,context) {
     try{
       const proxy=await doc.getPage(number);item.proxy=proxy;
       if(item.cancelled || current!==revision || closed){proxy.cleanup?.();return;}
-      const intrinsic=proxy.getViewport({scale:1}),fit=Math.max(0.1,Math.min((root.clientWidth-40)/intrinsic.width,1.6))*zoom,viewport=proxy.getViewport({scale:fit});
+      const intrinsic=proxy.getViewport({scale:1}),fit=Math.max(0.1,Math.min((layoutWidth()-40)/intrinsic.width,1.6))*zoom,viewport=proxy.getViewport({scale:fit});
       const oldHeight=parseFloat(paper.style.height),oldTop=paper.getBoundingClientRect().top;
       size(paper,viewport);
+      space.refresh();
       if(mode==='scroll' && number<page && oldTop<root.getBoundingClientRect().top)root.scrollTop+=viewport.height-oldHeight;
       const cap=mode==='scroll'?4_000_000:12_000_000,density=Math.min(globalThis.devicePixelRatio || 1,2,Math.sqrt(cap/(viewport.width*viewport.height)));
       canvas.width=Math.max(1,Math.floor(viewport.width*density));canvas.height=Math.max(1,Math.floor(viewport.height*density));canvas.style.width=viewport.width+'px';canvas.style.height=viewport.height+'px';
@@ -61,10 +66,10 @@ export async function renderPdfDocument(doc,pdfjs,root,context) {
   }
   const serial=action=>{const result=queue.catch(()=>{}).then(()=>{if(closed)throw new DOMException('Aborted','AbortError');return action();});queue=result;return result;};
   const stop=()=>{closed=true;revision++;tracker.dispose();for(const n of [...live.keys()])release(n);observer.disconnect();root.classList.remove('pdf-document');};
-  let width=root.clientWidth,height=root.clientHeight;
+  let width=layoutWidth(),height=layoutHeight();
   const observer=new ResizeObserver(()=>{
-    const newWidth=root.clientWidth,newHeight=root.clientHeight;if(newWidth===width && newHeight===height)return;
-    const changed=newWidth!==width;width=newWidth;height=newHeight;
+    const newWidth=layoutWidth(),newHeight=layoutHeight();if(newWidth===width && newHeight===height)return;
+    const changed=newWidth!==width;width=newWidth;height=newHeight;stack.style.width=Math.max(1,width-40)+'px';space.refresh();
     if(changed)void serial(async()=>{reset();await go(page);}).catch(error=>{if(!closed)context.onWarning?.(error);});else tracker.refresh();
   });observer.observe(root);context.signal.addEventListener('abort',stop,{once:true});
   if(context.signal.aborted){stop();throw new DOMException('Aborted','AbortError');}
@@ -72,8 +77,10 @@ export async function renderPdfDocument(doc,pdfjs,root,context) {
   return {
     setPage:value=>serial(()=>go(value)),
     setZoom:(value,anchor)=>serial(async()=>{
-      const restore=captureZoomAnchor(()=>papers,root,anchor);
-      zoom=value;reset();await go(page);restore();tracker.refresh();
+      const restore=captureZoomAnchor(()=>papers,root,anchor || {x:root.clientWidth/2,y:root.clientHeight/2});
+      navigating=true;
+      try{zoom=value;reset();space.refresh();restore();await schedule();space.refresh();restore();}
+      finally{navigating=false;tracker.refresh();}
     }),
     setViewMode:value=>serial(async()=>{const next=viewMode(value);if(next!==mode){mode=next;reset();await go(page);}return mode;}),
     copyText:()=>getSelection()?.toString() || '',

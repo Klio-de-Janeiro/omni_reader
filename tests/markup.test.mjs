@@ -79,18 +79,18 @@ test('Inline Markdown source, preview and export share one draft and scale witho
   try {
     const view = await openViewer(record.blob, root, { ext: 'md', signal: signal.signal });
     assert.ok(root.querySelector('h1')); await view.setZoom(1.5);
-    assert.equal(root.querySelector('article').style.fontSize, '24px'); signal.abort();
+    assert.equal(root.querySelector('article').style.transform, 'scale(1.5)'); signal.abort();
     const editor = await openMarkupEditor(record, root, { signal: new AbortController().signal, onDirty: value => dirty.push(value), onSave: async api => { saved = await api.export(); }, onClose() {}, onError: assert.fail });
     const input = root.querySelector('textarea'); assert.equal(w.document.activeElement, input);
     input.value += '\n\n## Новая глава\n\n$E=mc^2$'; input.dispatchEvent(new w.Event('input'));
     assert.equal(editor.dirty, true); assert.equal(dirty.at(-1), true);
     editor.toggleView(); assert.equal(input.hidden, true); assert.equal(root.querySelector('h2').textContent, 'Новая глава');
-    editor.adjustZoom(0.25); assert.equal(root.querySelector('article').style.fontSize, '20px');
+    editor.adjustZoom(0.25); assert.equal(root.querySelector('.visual-zoom-content').style.transform, 'scale(1.25)');
     editor.toggleView(); assert.equal(input.hidden, false); assert.match(input.value, /Новая глава/);
     editor.setBusy(true); assert.equal(input.readOnly, true); editor.setBusy(false);
     input.dispatchEvent(new w.KeyboardEvent('keydown', { key: 's', code: 'KeyS', ctrlKey: true, bubbles: true, cancelable: true }));
     await until(() => !!saved); assert.equal(new TextDecoder().decode(saved), input.value);
-    editor.adjustZoom(null); assert.equal(input.style.fontSize, '16px');
+    editor.adjustZoom(null); assert.equal(root.querySelector('.visual-zoom-content').style.transform, 'scale(1)');
     assert.equal(root.querySelectorAll('dialog').length, 0); editor.dispose();
   } finally { restore(); w.close(); }
 });
@@ -114,8 +114,8 @@ test('Fullscreen button edits Markdown, previews the draft and saves a copy; Ctr
     key({ctrlKey:true,key:'z',code:'KeyZ'});assert.equal(w.document.body.classList.contains('focus-mode'),true);
     const edit = w.document.querySelector('#focus-edit'); assert.equal(edit.hidden, false); assert.equal(edit.disabled, false);
     assert.equal(key({ ctrlKey: true, shiftKey: true, key: '+', code: 'Equal' }).defaultPrevented, true);
-    await until(() => w.document.querySelector('article').style.fontSize === '20px');
-    key({ ctrlKey: true, key: '-', code: 'NumpadSubtract' }); await until(() => w.document.querySelector('article').style.fontSize === '16px');
+    await until(() => w.document.querySelector('article').style.transform === 'scale(1.25)');
+    key({ ctrlKey: true, key: '-', code: 'NumpadSubtract' }); await until(() => w.document.querySelector('article').style.transform === 'scale(1)');
     edit.click(); await until(() => !edit.disabled && w.document.querySelector('textarea'));
     assert.equal(w.document.body.classList.contains('focus-mode'), true); assert.equal(edit.textContent, 'Просмотр');
     const input = w.document.querySelector('textarea'); input.value += '\n\n## Изменено'; input.dispatchEvent(new w.Event('input'));
@@ -124,8 +124,8 @@ test('Fullscreen button edits Markdown, previews the draft and saves a copy; Ctr
     const save = w.document.querySelector('#focus-save'); assert.equal(save.hidden, false); assert.equal(save.disabled, false);
     edit.click(); assert.equal(w.document.querySelector('#viewer h2').textContent, 'Изменено'); assert.equal(edit.textContent, 'Редактировать');
     edit.click(); assert.match(input.value, /Изменено/);
-    key({ ctrlKey: true, key: '=', code: 'Equal' }); assert.equal(input.style.fontSize, '20px');
-    key({ ctrlKey: true, key: '0', code: 'Numpad0' }); assert.equal(input.style.fontSize, '16px');
+    key({ ctrlKey: true, key: '=', code: 'Equal' }); assert.equal(w.document.querySelector('.visual-zoom-content').style.transform, 'scale(1.25)');
+    key({ ctrlKey: true, key: '0', code: 'Numpad0' }); assert.equal(w.document.querySelector('.visual-zoom-content').style.transform, 'scale(1)');
     key({ ctrlKey: true, key: 's', code: 'KeyS' });
     await until(() => w.document.querySelector('#reader-name').textContent === 'notes-edited-1.md' && w.document.querySelector('#viewer h2')?.textContent === 'Изменено');
     assert.equal(w.document.querySelector('#viewer h2').textContent, 'Изменено'); assert.equal(w.document.body.classList.contains('focus-mode'), true);

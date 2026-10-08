@@ -26,14 +26,14 @@ export function bindTouchPinch(root, zoomBy, { signal } = {}) {
     const distance = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
     if (!Number.isFinite(distance) || distance < 1) { previous = null; return; }
     const samePair = previous && [a.identifier, b.identifier].every(id => previous.ids.includes(id));
+    const rect = root.window === root ? { left: 0, top: 0 } : root.getBoundingClientRect();
+    const center = { x: (a.clientX + b.clientX) / 2 - rect.left, y: (a.clientY + b.clientY) / 2 - rect.top };
     if (event.type === 'touchmove' && samePair) {
-      const rect = root.window === root ? { left: 0, top: 0 } : root.getBoundingClientRect();
       zoomBy(-Math.log(distance / previous.distance) / 0.002, {
-        x: (a.clientX + b.clientX) / 2 - rect.left,
-        y: (a.clientY + b.clientY) / 2 - rect.top
+        ...center, from: previous.center
       });
     }
-    previous = { ids: [a.identifier, b.identifier], distance };
+    previous = { ids: [a.identifier, b.identifier], distance, center };
     if (event.type === 'touchcancel') previous = null;
   }
   const events = ['touchstart', 'touchmove', 'touchend', 'touchcancel'];
@@ -49,13 +49,94 @@ export function bindTouchPinch(root, zoomBy, { signal } = {}) {
 }
 
 /** Keep the point inside a page under the fingers after its size changes. */
+const scrollSpaces = new WeakMap();
+const isWindow = root => root.window === root;
+const viewportSize = root => {
+  if(isWindow(root))return {x:0,y:0,width:root.document.documentElement.clientWidth || root.innerWidth,height:root.innerHeight};
+  const css=root.ownerDocument.defaultView.getComputedStyle(root);
+  const x=parseFloat(css.paddingLeft) || 0,y=parseFloat(css.paddingTop) || 0;
+  return {x,y,width:root.clientWidth-x-(parseFloat(css.paddingRight) || 0),height:root.clientHeight-y-(parseFloat(css.paddingBottom) || 0)};
+};
+
+/** Allow an anchored point to stay put even at the native scroll boundaries. */
+export function createZoomSpace(root, content, { signal, center = false } = {}) {
+  const stage = content.ownerDocument.createElement('div'); stage.className = 'zoom-space';
+  stage.style.cssText = 'position:relative;display:flow-root;min-width:100%;min-height:100%;';
+  content.replaceWith(stage); stage.append(content);
+  content.style.position = 'relative';
+  let x = 0, y = 0, left = 0, top = 0, width = 0, height = 0;
+  const scroller = isWindow(root) ? root.document.scrollingElement || root.document.documentElement : root;
+  const anchoring = scroller.style.overflowAnchor; scroller.style.overflowAnchor = 'none';
+  function refresh(extraWidth = 0, extraHeight = 0) {
+    const viewport = viewportSize(root), rect = content.getBoundingClientRect();
+    const scale = content.offsetWidth ? rect.width / content.offsetWidth : 1;
+    width = Math.max(rect.width || content.offsetWidth, center ? 0 : (content.scrollWidth || 0) * scale);
+    height = Math.max(rect.height || content.offsetHeight, center ? 0 : (content.scrollHeight || 0) * scale);
+    left = x + (center ? Math.max(0, (viewport.width - width) / 2) : 0);
+    top = y + (center ? Math.max(0, (viewport.height - height) / 2) : 0);
+    content.style.left = left + 'px'; content.style.top = top + 'px';
+    const sx = isWindow(root) ? root.scrollX : root.scrollLeft, sy = isWindow(root) ? root.scrollY : root.scrollTop;
+    stage.style.width = Math.max(viewport.width, left + width, extraWidth, sx + viewport.width) + 'px';
+    stage.style.height = Math.max(viewport.height, top + height, extraHeight, sy + viewport.height) + 'px';
+  }
+  function restore(dx, dy) {
+    let sx = (isWindow(root) ? root.scrollX : root.scrollLeft) + dx;
+    let sy = (isWindow(root) ? root.scrollY : root.scrollTop) + dy;
+    if (sx < 0) { x -= sx; sx = 0; }
+    if (sy < 0) { y -= sy; sy = 0; }
+    const viewport = viewportSize(root);
+    refresh(sx + viewport.width, sy + viewport.height);
+    if (isWindow(root)) root.scrollTo(sx, sy);
+    else { root.scrollLeft = sx; root.scrollTop = sy; }
+  }
+  const api = { stage, refresh, restore };
+  scrollSpaces.set(root, api); refresh();
+  signal?.addEventListener('abort', () => {
+    if (scrollSpaces.get(root) === api) { scrollSpaces.delete(root); scroller.style.overflowAnchor = anchoring; }
+  }, { once: true });
+  return api;
+}
+
+/** Magnify an unchanged layout, rather than changing fonts and wrapping its lines. */
+export function createVisualZoom(root, content, { signal, center = false, fixedWidth = true, fillHeight = false } = {}) {
+  let zoom = 1;
+  function size() {
+    if (!fixedWidth) return;
+    const viewport = viewportSize(root);
+    content.style.width = Math.max(1, viewport.width) + 'px';
+    content.style.minHeight = Math.max(1, viewport.height) + 'px';
+    if (fillHeight) content.style.height = content.style.minHeight;
+  }
+  size(); content.style.transformOrigin = '0 0';
+  const space = createZoomSpace(root, content, { signal, center });
+  let bounds = root.getBoundingClientRect();
+  function setZoom(value, point) {
+    const viewport = viewportSize(root);
+    const restore = captureZoomAnchor(() => [content], root, point || { x: viewport.x + viewport.width / 2, y: viewport.y + viewport.height / 2 });
+    zoom = value; content.style.transform = `scale(${zoom})`; space.refresh(); restore();
+  }
+  const Observer = content.ownerDocument.defaultView.ResizeObserver || globalThis.ResizeObserver;
+  const observer = Observer && new Observer(entries => {
+    const next = root.getBoundingClientRect();
+    if (entries.some(entry => entry.target === root) && (next.width !== bounds.width || next.height !== bounds.height)) { size(); bounds = next; }
+    space.refresh();
+  });
+  observer?.observe(content); observer?.observe(root);
+  signal?.addEventListener('abort', () => observer?.disconnect(), { once: true });
+  return { setZoom, refresh: () => space.refresh(), get zoom() { return zoom; } };
+}
+
 export function captureZoomAnchor(getElements, root, point) {
   if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return () => {};
-  const frame = root === window ? { left: 0, top: 0 } : root.getBoundingClientRect();
-  const x = frame.left + point.x, y = frame.top + point.y, elements = getElements();
-  const index = elements.findIndex(el => {
+  const frame = isWindow(root) ? { left: 0, top: 0 } : root.getBoundingClientRect();
+  const source = point.from || point;
+  const x = frame.left + source.x, y = frame.top + source.y, elements = getElements();
+  let index = -1, distance = Infinity;
+  elements.forEach((el, i) => {
     const rect = el.getBoundingClientRect();
-    return !el.hidden && rect.height > 0 && rect.top <= y && rect.bottom >= y;
+    if (el.hidden || !rect.width || !rect.height) return;
+    const gap = Math.hypot(Math.max(rect.left - x, 0, x - rect.right), Math.max(rect.top - y, 0, y - rect.bottom));
+    if (gap < distance) { distance = gap; index = i; }
   });
   if (index < 0) return () => {};
   const rect = elements[index].getBoundingClientRect();
@@ -64,8 +145,10 @@ export function captureZoomAnchor(getElements, root, point) {
   return () => {
     const element = getElements()[index]; if (!element || element.hidden) return;
     const next = element.getBoundingClientRect();
-    const dx = next.left + rx * next.width - x, dy = next.top + ry * next.height - y;
-    if (root === window) root.scrollBy(dx, dy);
+    const dx = next.left + rx * next.width - frame.left - point.x, dy = next.top + ry * next.height - frame.top - point.y;
+    const space = scrollSpaces.get(root);
+    if (space) space.restore(dx, dy);
+    else if (isWindow(root)) root.scrollBy(dx, dy);
     else { root.scrollLeft += dx; root.scrollTop += dy; }
   };
 }
@@ -78,7 +161,7 @@ export function bindZoomGestures(root, { getZoom, setZoom, signal, onError }) {
   };
   async function apply() {
     frame = 0; if (disposed || wanted === null) return;
-    const value = wanted, point = anchor; wanted = null; running = true;
+    const value = wanted, point = anchor; wanted = null; anchor = null; running = true;
     try { await setZoom(value, point); }
     catch (error) { if (!disposed) onError?.(error); }
     finally { running = false; if (wanted !== null) schedule(); }
@@ -88,7 +171,9 @@ export function bindZoomGestures(root, { getZoom, setZoom, signal, onError }) {
     if (disposed || !Number.isFinite(delta)) return;
     const start = wanted ?? (running ? requested : getZoom());
     wanted = Math.max(0.5, Math.min(3, start * Math.exp(-delta * 0.002)));
-    requested = wanted; anchor = point; schedule();
+    requested = wanted;
+    anchor = point?.from && anchor?.from ? { ...point, from: anchor.from } : point;
+    schedule();
   }
   const wheel = event => {
     const delta = wheelZoomDelta(event); if (delta === null) return;

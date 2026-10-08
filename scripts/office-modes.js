@@ -24,9 +24,9 @@ export function officeModes({container,getViewer,editor,initialMode,onPage,fitDo
       finally{navigating=false;tracker.refresh();}
       return mode;
     },
-    async zoom(value,action){
+    async zoom(value,action,preserveViewport=false){
       const keep=page;editor?.flush();navigating=true;const book=editor?.bookmark(keep);page=keep;
-      try{await action(value);await go(keep);navigating=true;editor?.restore(book);page=keep;onPage(page);}
+      try{await action(value);if(!preserveViewport)await go(keep);navigating=true;editor?.restore(book);page=keep;onPage(page);}
       finally{navigating=false;tracker.refresh();}
     },
     slideChanged(index){if(!navigating){page=index+1;onPage(page);}},

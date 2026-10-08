@@ -64,10 +64,16 @@ test('Unmounting a slide commits pending composition and restores it when the sl
   }finally{viewer.destroy();bridge.dispose();w.close();}
 });
 function pdfFixture(w,delayed=false){
-  const root=document.querySelector('#office'),reported=[];Object.defineProperties(root,{clientWidth:{value:900},clientHeight:{value:600}});root.getBoundingClientRect=()=>({top:0,bottom:600,height:600,width:900});
+  const root=document.querySelector('#office'),reported=[];Object.defineProperties(root,{clientWidth:{value:900},clientHeight:{value:600}});root.getBoundingClientRect=()=>({left:0,right:900,top:0,bottom:600,height:600,width:900});
   const rect=w.HTMLElement.prototype.getBoundingClientRect;w.HTMLElement.prototype.getBoundingClientRect=function(){
+    if(this.classList.contains('pdf-pages')){
+      const width=parseFloat(this.style.width),height=[...this.children].filter(el=>!el.hidden).reduce((sum,el)=>sum+parseFloat(el.style.height)+20,0);
+      const left=(parseFloat(this.style.left) || 0)-root.scrollLeft,top=(parseFloat(this.style.top) || 0)-root.scrollTop;
+      return {left,top,width,height,right:left+width,bottom:top+height};
+    }
     if(!this.classList.contains('pdf-paper'))return rect.call(this);if(this.hidden)return {top:0,height:0,bottom:0};
-    let top=20-root.scrollTop;for(const el of this.parentElement.children){if(el===this)break;if(!el.hidden)top+=parseFloat(el.style.height)+20;}const height=parseFloat(this.style.height);return {top,height,bottom:top+height,width:600};
+    const stack=this.parentElement,frame=stack.getBoundingClientRect(),width=parseFloat(this.style.width),left=frame.left+Math.max(0,(frame.width-width)/2);
+    let top=20+frame.top;for(const el of stack.children){if(el===this)break;if(!el.hidden)top+=parseFloat(el.style.height)+20;}const height=parseFloat(this.style.height);return {left,right:left+width,top,height,bottom:top+height,width};
   };
   let cancelled=false;const doc={numPages:80,async getPage(n){return {getViewport:({scale})=>({width:600*scale,height:800*scale,scale}),async getTextContent(){return {items:[{str:'marker-'+n}]};},cleanup(){},render(){let cancel;const promise=delayed && n===42?new Promise((resolve,reject)=>{const timer=setTimeout(resolve,1000);cancel=()=>{cancelled=true;clearTimeout(timer);reject(Object.assign(new Error('Cancelled'),{name:'RenderingCancelledException'}));};}):Promise.resolve();return {promise,cancel(){cancel?.();}};}};}};
   class TextLayer{constructor(o){this.options=o;}async render(){const s=document.createElement('span');s.textContent=this.options.textContentSource.items[0].str;this.options.container.append(s);}cancel(){}}
@@ -87,5 +93,19 @@ test('Closing a PDF cancels active rendering and releases its canvases',async()=
   const w=setup(),f=pdfFixture(w,true);
   try{
     const viewer=await renderPdfDocument(f.doc,f.pdfjs,f.root,f.context),pending=viewer.setPage(42);await new Promise(resolve=>setTimeout(resolve,10));f.controller.abort();await pending.catch(()=>{});assert.ok(f.cancelled);assert.equal(f.root.querySelectorAll('canvas').length,0);
+  }finally{f.controller.abort();w.close();}
+});
+
+test('PDF pinch retains the exact point inside a scrolled page in both viewing modes',async()=>{
+  const w=setup(),f=pdfFixture(w);
+  try{
+    const viewer=await renderPdfDocument(f.doc,f.pdfjs,f.root,f.context);await viewer.setPage(42);f.root.scrollTop+=280;
+    for(const mode of ['scroll','page']){
+      await viewer.setViewMode(mode);const paper=f.root.querySelector('[data-page="42"]'),point={x:130,y:260},before=paper.getBoundingClientRect();
+      const rx=(point.x-before.left)/before.width,ry=(point.y-before.top)/before.height;
+      await viewer.setZoom(mode==='scroll'?2:1.25,point);const after=paper.getBoundingClientRect();
+      assert.ok(Math.abs(after.left+rx*after.width-point.x)<1e-8);assert.ok(Math.abs(after.top+ry*after.height-point.y)<1e-8);
+      assert.ok(f.root.querySelectorAll('canvas').length<=4);
+    }
   }finally{f.controller.abort();w.close();}
 });

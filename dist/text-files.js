@@ -1,5 +1,5 @@
 import { decodeMarkup } from './markup.js';
-import { captureZoomAnchor, bindZoomGestures } from './gestures.js';
+import { bindZoomGestures, createVisualZoom } from './gestures.js';
 import { editingShortcut } from './shortcuts.js';
 import { History } from './editors/history.js';
 import { LIMITS } from './validation.js';
@@ -104,12 +104,10 @@ export async function openText(file, root, context) {
   if (context.signal.aborted) throw new DOMException('Aborted', 'AbortError');
   const article = makeNode(root.ownerDocument, 'article', 'source-document');
   article.append(renderText(textCodec(bytes).text, context.ext, root.ownerDocument)); root.replaceChildren(article);
+  const visual = createVisualZoom(root, article, { signal: context.signal });
   return {
     ...textNavigation(article),
-    setZoom(value, point) {
-      const restore = captureZoomAnchor(() => [article], root, point);
-      article.style.fontSize = `${16 * value}px`; restore();
-    }
+    setZoom: visual.setZoom
   };
 }
 
@@ -132,6 +130,8 @@ export async function openTextEditor(record, root, options, custom = {}) {
   const article = node('article', custom.articleClass || 'source-document'); article.hidden = true;
   canvas.append(input, article); panel.append(bar, status, canvas); root.replaceChildren(panel);
   const colors=colorInput(input,record.ext,{signal});
+  const zoomContent=node('div','visual-zoom-content');zoomContent.append(colors.wrap,article);canvas.replaceChildren(zoomContent);
+  const visual=createVisualZoom(canvas,zoomContent,{signal,fillHeight:true});
   const history = new History(); let sourceMode = true, busy = false, disposed = false, zoom = initialZoom, draft = original;
   let selection = { start: 0, end: 0 }, api;
   const render = () => article.replaceChildren(custom.render ? custom.render(input.value) : renderText(input.value, record.ext, document));
@@ -153,9 +153,8 @@ export async function openTextEditor(record, root, options, custom = {}) {
   }
   function setZoom(value, point) {
     if (disposed) return;
-    const restore = captureZoomAnchor(() => [sourceMode ? input : article], canvas, point);
     zoom = Math.max(0.5, Math.min(3, value));
-    input.style.fontSize = `${16 * zoom}px`; article.style.fontSize = `${16 * zoom}px`; colors.refresh();restore();
+    visual.setZoom(zoom,point);colors.refresh();
   }
   api = {
     get dirty() { return input.value !== original; }, get busy() { return busy; }, get sourceMode() { return sourceMode; },

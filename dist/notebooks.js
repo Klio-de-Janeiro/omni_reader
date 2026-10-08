@@ -1,5 +1,5 @@
 import { decodeMarkup } from './markup.js';
-import { captureZoomAnchor, bindZoomGestures } from './gestures.js';
+import { bindZoomGestures, createVisualZoom } from './gestures.js';
 import { editingShortcut } from './shortcuts.js';
 import { History } from './editors/history.js';
 import { makeNode, openTextEditor, parseJson, renderText, textNavigation } from './text-files.js';
@@ -110,12 +110,10 @@ export async function openNotebook(file, root, context) {
   if (context.signal.aborted) throw new DOMException('Aborted', 'AbortError');
   const document = root.ownerDocument, article = makeNode(document, 'article', 'notebook-document');
   article.append(notebookPreview(decodeMarkup(bytes), document, renderMarkup)); root.replaceChildren(article);
+  const visual = createVisualZoom(root, article, { signal: context.signal });
   return {
     ...textNavigation(article),
-    setZoom(value, point) {
-      const restore = captureZoomAnchor(() => [...article.querySelectorAll('.notebook-cell')], root, point);
-      article.style.fontSize = `${16 * value}px`; restore();
-    }
+    setZoom: visual.setZoom
   };
 }
 
@@ -231,9 +229,7 @@ export async function openNotebookEditor(record, root, options) {
   }
   function setZoom(value, point) {
     if (disposed) return;
-    const restore = captureZoomAnchor(() => [...cells.children], canvas, point);
-    zoom = Math.max(0.5, Math.min(3, value)); article.style.fontSize = `${16 * zoom}px`;
-    for (const cell of notebook.cells) resize(views.get(cell).input); restore();
+    zoom = Math.max(0.5, Math.min(3, value));visual.setZoom(zoom,point);
   }
   api = {
     get dirty() { return history.dirty; }, get busy() { return busy; }, get sourceMode() { return sourceMode; },
@@ -243,6 +239,7 @@ export async function openNotebookEditor(record, root, options) {
     adjustZoom: delta => setZoom(delta === null ? 1 : zoom + delta),
     dispose() { if (disposed) return; disposed = true; gestures.dispose();for(const colors of allColors)colors.dispose();allColors.clear(); }
   };
+  const visual=createVisualZoom(canvas,article,{signal});
   const gestures = bindZoomGestures(canvas, { signal, getZoom: () => zoom, setZoom, onError });
   history.onChange = update;
   undo.onclick = guarded(() => history.undo()); redo.onclick = guarded(() => history.redo());

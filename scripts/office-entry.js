@@ -4,8 +4,8 @@ import { createInlineEditor } from './office-inline.js';
 import { applyShortcutBindings, shortcutCommand } from '../dist/shortcuts.js';
 import { createReadHighlights } from '../dist/read-highlights.js';
 import { officeModes } from './office-modes.js';
-import { wheelZoomDelta, captureZoomAnchor, bindTouchPinch } from '../dist/gestures.js';
-let viewer, token, zoom=1,docWidth=800,docScale,modes,editor,renderBookmark,highlights;
+import { wheelZoomDelta, captureZoomAnchor, bindTouchPinch, createZoomSpace } from '../dist/gestures.js';
+let viewer, token, zoom=1,docWidth=800,docScale,modes,editor,renderBookmark,highlights,space;
 let queryState='',hitIndex=-1, action=Promise.resolve();
 const container=document.querySelector('#office');
 const send=data=>parent.postMessage({...data,token},'*');
@@ -17,6 +17,8 @@ function fitDocument(){
 }
 async function openDocument(data){
   token=data.token;
+  container.style.width=(document.documentElement.clientWidth || innerWidth)+'px';
+  space=createZoomSpace(window,container);
   applyShortcutBindings(data.bindings || {},window);
   if(data.blocks)editor=createInlineEditor(data.blocks,message=>{
     if(message.type==='edit-selection' && message.id){
@@ -53,6 +55,7 @@ async function openDocument(data){
     send({type:'loaded',pages:sections.length});
   }
   highlights=createReadHighlights(container,{canHighlight:()=>!editor});
+  space.refresh();
 }
 async function message(data){
   if(data.type==='open' && !token){await openDocument(data);return;}
@@ -68,8 +71,13 @@ async function message(data){
   if(data.type==='page'){await modes.go(data.page);send({type:'reply',requestId:data.requestId,result:modes.page});}
   if(data.type==='view-mode'){await modes.setMode(data.mode);send({type:'reply',requestId:data.requestId,result:modes.mode});}
   if(data.type==='zoom'){
-    const restore=captureZoomAnchor(()=>[...container.querySelectorAll('section.docx,[data-slide-index]')],window,data.anchor);
-    await modes.zoom(data.zoom,async value=>{zoom=value;if(viewer)await viewer.setZoom(value*100);else fitDocument();});
+    const restore=captureZoomAnchor(()=>[...container.querySelectorAll('section.docx,[data-slide-index]')],window,data.anchor || {x:innerWidth/2,y:innerHeight/2});
+    await modes.zoom(data.zoom,async value=>{
+      zoom=value;
+      if(viewer){container.style.transformOrigin='0 0';container.style.transform=`scale(${value})`;}
+      else fitDocument();
+      space.refresh();
+    },true);
     restore();send({type:'reply',requestId:data.requestId,result:zoom});
   }
   if(data.type==='flush'){editor?.flush();send({type:'reply',requestId:data.requestId,result:true});}
@@ -103,7 +111,7 @@ addEventListener('message',event=>{
   if(event.source!==parent || !event.data || typeof event.data!=='object')return;
   const data=event.data;action=action.then(()=>message(data)).catch(error=>send({type:'error',requestId:data.requestId,message:error.message || 'Ошибка документа.'}));
 });
-addEventListener('resize',fitDocument);
+addEventListener('resize',()=>{container.style.width=(document.documentElement.clientWidth || innerWidth)+'px';fitDocument();space?.refresh();});
 addEventListener('wheel',event=>{
   const delta=wheelZoomDelta(event);
   if(delta===null || !token)return;

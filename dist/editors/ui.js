@@ -1,5 +1,5 @@
 import { openPdfUI } from './pdf-ui.js';
-import { bindZoomGestures } from '../gestures.js';
+import { bindZoomGestures, createVisualZoom } from '../gestures.js';
 import { openOfficeUI } from './office-ui.js';
 import { CsvEditor } from './csv.js';
 import { WavEditor } from './wav.js';
@@ -68,10 +68,12 @@ async function openEditorUI(record, root, { onSave, onClose, onError, onDirty, s
     const go = button('Перейти к ячейке'), apply = button('Применить ячейку');
     controls.append(field('Редактируемый лист', sheets), field('Ячейка', at), go, field('Тип значения', type));
     const grid = node('div', null, 'table-scroll editor-grid');
+    grid.style.fontSize='14px';
+    const zoomContent=node('div',null,'table-zoom-content');grid.append(zoomContent);
+    let gridVisual;
     let gridZoom = initialZoom;
-    grid.style.fontSize = `${gridZoom * 14}px`;
-    adjustZoom=delta=>{if(busy || disposed)return;gridZoom=Math.max(0.5,Math.min(3,delta===null?1:gridZoom+delta));grid.style.fontSize=`${gridZoom * 14}px`;};
-    bindZoomGestures(grid, { signal, onError, getZoom: () => gridZoom, setZoom(value) { gridZoom = value; grid.style.fontSize = `${value * 14}px`; } });
+    adjustZoom=delta=>{if(busy || disposed)return;gridZoom=Math.max(0.5,Math.min(3,delta===null?1:gridZoom+delta));gridVisual?.setZoom(gridZoom);};
+    bindZoomGestures(grid, { signal, onError, getZoom: () => gridZoom, setZoom(value,point) { gridZoom = value;gridVisual?.setZoom(value,point); } });
     body.append(controls, field('Значение ячейки', value), apply, node('p', ext === 'xlsx' ? 'Редактируются исходные значения. Формулы не вычисляются здесь; результаты обновятся при открытии копии в Excel или LibreOffice. Для текста с начальным «=» оставьте тип «Текст».' : `CSV открыт как ${model.encoding}. Копия сохраняется в UTF-8 с BOM и тем же разделителем.`, 'editor-note'), grid);
     pending = () => { const current = model.getCell(sheetIndex, address); return value.value !== current.value || (type.value !== current.type && !(current.value === '' && type.value === 'text')); };
     flush = () => { if (pending()) model.setCell(sheetIndex, address, value.value, type.value); };
@@ -122,7 +124,9 @@ async function openEditorUI(record, root, { onSave, onClose, onError, onDirty, s
         }
         table.append(tr);
       }
-      grid.replaceChildren(table);
+      zoomContent.replaceChildren(table);
+      if(!gridVisual){zoomContent.style.width=Math.max(grid.clientWidth,zoomContent.scrollWidth,zoomContent.offsetWidth,1)+'px';gridVisual=createVisualZoom(grid,zoomContent,{signal,fixedWidth:false});gridVisual.setZoom(gridZoom);}
+      else gridVisual.refresh();
     };
     value.oninput = update; type.onchange = update;
     apply.onclick = guarded(() => { flush(); render(); update(); });

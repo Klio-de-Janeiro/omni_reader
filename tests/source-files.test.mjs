@@ -53,7 +53,7 @@ test('Text source viewers and inline editors preserve data, preview current draf
       const viewController = new AbortController(), view = await openViewer(record.blob, f.root, { ext, signal: viewController.signal });
       assert.ok(f.root.querySelector('pre')); assert.equal(f.w.injected, undefined);
       assert.equal(f.root.querySelectorAll('script,img,button').length, 0);
-      await view.setZoom(1.5); assert.equal(f.root.querySelector('article').style.fontSize, '24px'); viewController.abort();
+      await view.setZoom(1.5); assert.equal(f.root.querySelector('article').style.transform, 'scale(1.5)'); viewController.abort();
       let saved; const controller = new AbortController();
       const editor = await openEditor(record, f.root, { signal: controller.signal, onDirty() {}, onError: assert.fail, onClose() {}, onSave: api => { saved = api.export(); } });
       const input = f.root.querySelector('textarea'); assert.equal(input.value, source); assert.equal(editor.dirty, false);
@@ -63,7 +63,7 @@ test('Text source viewers and inline editors preserve data, preview current draf
       assert.equal(input.value, source); assert.equal(editor.dirty, false);
       input.dispatchEvent(new f.w.KeyboardEvent('keydown', { key: 'y', code: 'KeyY', ctrlKey: true, bubbles: true, cancelable: true })); assert.equal(input.value, changed);
       editor.toggleView(); assert.equal(input.hidden, true); assert.match(f.root.querySelector('article').textContent, ext === 'json' ? /changed/ : /Добавлено/);
-      editor.toggleView(); assert.equal(input.value, changed); editor.adjustZoom(.25); assert.equal(input.style.fontSize, '20px');
+      editor.toggleView(); assert.equal(input.value, changed); editor.adjustZoom(.25); assert.equal(f.root.querySelector('.visual-zoom-content').style.transform, 'scale(1.25)');
       editor.setBusy(true); assert.equal(input.readOnly, true); editor.setBusy(false);
       input.dispatchEvent(new f.w.KeyboardEvent('keydown', { key: 's', code: 'KeyS', ctrlKey: true, bubbles: true, cancelable: true }));
       await until(() => saved); assert.equal(new TextDecoder().decode(saved), changed);
@@ -113,7 +113,7 @@ test('Notebook viewer renders Markdown/formulas, literal code and saved outputs 
     assert.match(f.root.querySelector('.notebook-outputs').textContent, /before\n/);
     assert.equal(f.root.querySelector('td').textContent, 'Результат'); assert.equal(f.root.querySelectorAll('script,button,[id]').length, 0);
     assert.equal(f.w.injected, undefined); const result = view.find('print'); assert.match(result.message, /найдено/);
-    assert.equal(f.w.getSelection().toString(), 'print'); await view.setZoom(2); assert.equal(f.root.querySelector('article').style.fontSize, '32px');
+    assert.equal(f.w.getSelection().toString(), 'print'); await view.setZoom(2); assert.equal(f.root.querySelector('article').style.transform, 'scale(2)');
   } finally { signal.abort(); f.close(); }
 });
 
@@ -141,7 +141,7 @@ test('Notebook cell edits, preview, add/delete, undo and export keep metadata, a
     [...f.root.querySelectorAll('.notebook-cell-heading button')].at(-1).click(); assert.equal(f.root.querySelectorAll('.notebook-cell').length, 3);
     button('Отменить').click(); assert.equal(f.root.querySelectorAll('.notebook-cell').length, 4);
     editor.setBusy(true); assert.equal(inputs[0].readOnly, true); editor.setBusy(false);
-    editor.adjustZoom(.25); assert.equal(f.root.querySelector('article').style.fontSize, '20px');
+    editor.adjustZoom(.25); assert.equal(f.root.querySelector('article').style.transform, 'scale(1.25)');
   } finally { signal.abort(); f.close(); }
 });
 

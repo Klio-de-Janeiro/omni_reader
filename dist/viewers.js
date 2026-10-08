@@ -1,5 +1,5 @@
 import { renderPdfDocument } from './pdf-viewer.js';
-import { bindZoomGestures } from './gestures.js';
+import { bindZoomGestures, createVisualZoom } from './gestures.js';
 import { openTable } from './tables.js';
 import { openMarkup } from './markup.js';
 import { openText } from './text-files.js';
@@ -93,20 +93,24 @@ async function openImage(file, root, context) {
   if (context.signal.aborted) throw new DOMException('Aborted', 'AbortError');
   if (image.naturalWidth * image.naturalHeight > 40_000_000) throw new Error('Изображение больше 40 мегапикселей. Уменьшите разрешение.');
   const wrap = element('div', 'image-wrap'); wrap.append(image); root.replaceChildren(wrap);
-  let zoom = 1, rotation = 0;
+  let rotation = 0, visual;
   function fit() {
     const sideways = rotation % 180 !== 0;
     const width = sideways ? image.naturalHeight : image.naturalWidth;
     const height = sideways ? image.naturalWidth : image.naturalHeight;
-    const factor = Math.min((root.clientWidth - 40) / width, (root.clientHeight - 40) / height, 1) * zoom;
+    const gap = document.body.classList.contains('focus-mode') ? 0 : 40;
+    const bounds=root.getBoundingClientRect();
+    const factor = Math.min(Math.max(1, (bounds.width || root.clientWidth) - gap) / width, Math.max(1, (bounds.height || root.clientHeight) - gap) / height);
     image.style.width = `${image.naturalWidth * factor}px`; image.style.height = `${image.naturalHeight * factor}px`;
     image.style.transform = `rotate(${rotation}deg)`;
-    wrap.style.width = `${Math.max(root.clientWidth - 40, width * factor)}px`;
-    wrap.style.height = `${Math.max(root.clientHeight - 40, height * factor)}px`;
+    wrap.style.width = `${width * factor}px`; wrap.style.minWidth = '0';
+    wrap.style.height = `${height * factor}px`; wrap.style.minHeight = '0';
+    visual?.refresh();
   }
-  fit(); const observer = new ResizeObserver(fit); observer.observe(root);
+  fit(); visual = createVisualZoom(root, wrap, {signal:context.signal,center:true,fixedWidth:false});
+  const observer = new ResizeObserver(fit); observer.observe(root);
   context.signal.addEventListener('abort', () => observer.disconnect(), { once: true });
-  return { setZoom: value => { zoom = value; fit(); }, rotate: () => { rotation = (rotation + 90) % 360; fit(); } };
+  return { setZoom: visual.setZoom, rotate: () => { rotation = (rotation + 90) % 360; fit(); } };
 }
 /** Play browser-supported WAV codecs using native accessible media controls. */
 async function openAudio(file, root, context) {
@@ -156,6 +160,6 @@ export async function openViewer(file, root, context) {
     await resize(next,anchor);
     if (!context.signal.aborted) { zoom = next; context.onZoom?.(zoom); }
   };
-  gestures = bindZoomGestures(root, {getZoom:()=>zoom,setZoom:api.setZoom,signal:context.signal,onError:context.onWarning});
+  gestures = bindZoomGestures(api.zoomRoot || root, {getZoom:()=>zoom,setZoom:api.setZoom,signal:context.signal,onError:context.onWarning});
   return api;
 }

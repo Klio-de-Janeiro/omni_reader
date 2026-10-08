@@ -14,5 +14,5 @@
 .notebook-outputs{border-top:1px solid var(--theme-border);padding:12px 16px;display:flex;flex-direction:column;gap:12px;min-width:0}.notebook-output{min-width:0}.notebook-output .source-preview{padding:8px;background:var(--theme-surface)}.notebook-output .markdown-document{font-size:inherit;min-height:0;padding:8px}
 .notebook-image{max-width:100%;height:auto}.notebook-caption{margin:0;color:var(--theme-muted);font-size:.85em}.notebook-stale{padding:8px 16px;background:var(--theme-raised)}.notebook-error{color:#e87391}.notebook-add{display:flex;justify-content:center;flex-wrap:wrap;gap:8px;padding:8px}.notebook-add button{flex:0 1 auto}
 .json,.yaml,.yml,.js,.env,.txt,.ipynb{background:var(--theme-control)!important;color:var(--theme-accent)!important;border-color:var(--theme-border)!important}
-body.focus-mode .source-document,body.focus-mode .notebook-document{padding-top:72px}body.focus-mode .source-input{min-height:0;padding-top:72px}body.focus-mode #viewer:has(>.source-document),body.focus-mode #viewer:has(>.notebook-document){padding:0}
+body.focus-mode .source-document,body.focus-mode .notebook-document{padding-top:72px}body.focus-mode .source-input{min-height:0;padding-top:72px}body.focus-mode #viewer:has(>.zoom-space>.source-document),body.focus-mode #viewer:has(>.zoom-space>.notebook-document){padding:0}
 

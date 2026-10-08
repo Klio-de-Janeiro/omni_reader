@@ -1,5 +1,6 @@
 import { columnName, parseAddress, parseCsv, detectDelimiter, rangeText } from './table-core.js';
 import { copyText } from './clipboard.js';
+import { createVisualZoom } from './gestures.js';
 const ROWS = 100, COLS = 30;
 function node(tag, text, className) { const el = document.createElement(tag); if (text != null) el.textContent = text; if (className) el.className = className; return el; }
 /** Show a bounded table window with selection across windows and sheets. */
@@ -37,6 +38,9 @@ export async function openTable(file, root, context) {
   }
   const detail = node('div', null, 'cell-detail'); detail.tabIndex = 0; detail.setAttribute('aria-label', 'Содержимое активной ячейки');
   const scroller = node('div', null, 'table-scroll'); scroller.tabIndex = 0;
+  scroller.style.fontSize='14px';
+  const content=node('div',null,'table-zoom-content');scroller.append(content);
+  let visual;
   const navigation = node('div', null, 'table-nav');
   const prevRows = node('button', '−100 строк'), nextRows = node('button', '+100 строк');
   const prevCols = node('button', '← столбцы'), nextCols = node('button', 'столбцы →');
@@ -80,7 +84,7 @@ export async function openTable(file, root, context) {
       }
       body.append(tr);
     }
-    table.append(body); scroller.replaceChildren(table); selection();
+    table.append(body); content.replaceChildren(table);visual?.refresh(); selection();
     status.textContent = `${startRow + 1}–${Math.min(item.rows, startRow + ROWS)} / ${item.rows} строк · ${columnName(startCol)}–${columnName(Math.min(item.cols - 1, startCol + COLS - 1))}`;
     prevRows.disabled = startRow === 0; nextRows.disabled = startRow + ROWS >= item.rows;
     prevCols.disabled = startCol === 0; nextCols.disabled = startCol + COLS >= item.cols;
@@ -115,5 +119,7 @@ export async function openTable(file, root, context) {
     go(next, event.shiftKey ? start : next);
   };
   render();
-  return { copyText: () => rangeText(sheet(), start, end), setZoom: value => { scroller.style.fontSize = `${value * 14}px`; } };
+  content.style.width=Math.max(scroller.clientWidth,content.scrollWidth,content.offsetWidth,1)+'px';
+  visual=createVisualZoom(scroller,content,{signal:context.signal,fixedWidth:false});
+  return { copyText: () => rangeText(sheet(), start, end), zoomRoot:scroller, setZoom:visual.setZoom };
 }

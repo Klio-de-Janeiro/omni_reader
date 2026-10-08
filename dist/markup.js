@@ -1,4 +1,4 @@
-import { captureZoomAnchor, bindZoomGestures } from './gestures.js';
+import { bindZoomGestures, createVisualZoom } from './gestures.js';
 import { editingShortcut } from './shortcuts.js';
 import { History } from './editors/history.js';
 import { colorInput } from './syntax.js';
@@ -20,11 +20,9 @@ export async function openMarkup(file, root, context) {
   if (context.signal.aborted) throw new DOMException('Aborted', 'AbortError');
   const article = document.createElement('article'); article.className = 'markdown-document';
   article.append(renderMarkup(decodeMarkup(bytes), context.ext, root.ownerDocument.defaultView)); root.replaceChildren(article);
+  const visual = createVisualZoom(root, article, { signal: context.signal });
   return {
-    setZoom(value, point) {
-      const restore = captureZoomAnchor(() => [article], root, point);
-      article.style.fontSize = `${16 * value}px`; restore();
-    },
+    setZoom: visual.setZoom,
     copyText: () => getSelection()?.toString() || '',
     find(query) {
       const walker = document.createTreeWalker(article, NodeFilter.SHOW_TEXT);
@@ -63,6 +61,9 @@ export async function openMarkupEditor(record, root, options) {
   const history=new History();let draft=original,selection={start:0,end:0};
   canvas.append(input, article); panel.append(bar, canvas); root.replaceChildren(panel);
   const colors=colorInput(input,'md',{signal});
+  const zoomContent=document.createElement('div');zoomContent.className='visual-zoom-content';
+  zoomContent.append(colors.wrap,article);canvas.replaceChildren(zoomContent);
+  const visual=createVisualZoom(canvas,zoomContent,{signal,fillHeight:true});
   function update() {
     if (disposed) return;
     input.readOnly = busy; for (const button of [preview, save, close]) button.disabled = busy;
@@ -78,11 +79,10 @@ export async function openMarkupEditor(record, root, options) {
     sourceMode = !sourceMode; input.hidden = !sourceMode;colors.wrap.hidden=!sourceMode; article.hidden = sourceMode;
     update(); if (sourceMode) input.focus({ preventScroll: true });
   }
-  function setZoom(value) {
+  function setZoom(value, point) {
     if (disposed) return;
     zoom = Math.max(0.5, Math.min(3, value));
-    input.style.fontSize = `${16 * zoom}px`; article.style.fontSize = `${16 * zoom}px`;
-    colors.refresh();
+    visual.setZoom(zoom,point);colors.refresh();
   }
   api = {
     get dirty() { return input.value !== original; }, get busy() { return busy; }, get sourceMode() { return sourceMode; },

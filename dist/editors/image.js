@@ -4,20 +4,34 @@ import { History } from './history.js';
 export function imageGeometry(width, height, state) {
   const { x, y, w, h, turns } = state;
   if (![x, y, w, h, turns].every(Number.isInteger) || x < 0 || y < 0 || w < 1 || h < 1 || x + w > width || y + h > height || turns < 0 || turns > 3) throw new Error('Обрезка должна находиться внутри исходного изображения; размеры — целые пиксели.');
-  return { width: turns % 2 ? h : w, height: turns % 2 ? w : h };
+  if (!Number.isFinite(state.angle ?? 0) || Math.abs(state.angle ?? 0)>180 || ['flipX','flipY'].some(key=>state[key]!==undefined && typeof state[key]!=='boolean')) throw new Error('Некорректный поворот или отражение изображения.');
+  const angle = imageAngle(state), c = Math.abs(Math.cos(angle)), s = Math.abs(Math.sin(angle));
+  const size={width:Math.max(1,Math.ceil(w*c+h*s-1e-8)),height:Math.max(1,Math.ceil(w*s+h*c-1e-8))};
+  if(size.width*size.height>80_000_000)throw new Error('Лимит изображения после поворота: 80 мегапикселей.');
+  return size;
+}
+
+export const imageAngle = state => (state.turns*90+(state.angle || 0))*Math.PI/180;
+
+/** Project an original pixel onto the cropped, rotated and mirrored preview. */
+export function imagePreviewPoint(point,state) {
+  const size=imageGeometry(state.x+state.w,state.y+state.h,state),angle=imageAngle(state);
+  const x=(point.x-state.x-state.w/2)*(state.flipX?-1:1),y=(point.y-state.y-state.h/2)*(state.flipY?-1:1);
+  return {x:size.width/2+x*Math.cos(angle)-y*Math.sin(angle),y:size.height/2+x*Math.sin(angle)+y*Math.cos(angle)};
 }
 
 /** Map a point in a rotated preview back to the original image coordinates. */
-export function imagePoint(point, state) {
+export function imagePoint(point, state, clamp=true) {
   const size = imageGeometry(state.x + state.w, state.y + state.h, state);
-  const dx = point.x - size.width / 2, dy = point.y - size.height / 2, angle = state.turns * Math.PI / 2;
-  return { x: Math.max(state.x, Math.min(state.x + state.w, state.x + state.w / 2 + dx * Math.cos(angle) + dy * Math.sin(angle))),
-    y: Math.max(state.y, Math.min(state.y + state.h, state.y + state.h / 2 - dx * Math.sin(angle) + dy * Math.cos(angle))) };
+  const dx = point.x - size.width / 2, dy = point.y - size.height / 2, angle = imageAngle(state);
+  const x=state.x+state.w/2+(dx*Math.cos(angle)+dy*Math.sin(angle))*(state.flipX?-1:1);
+  const y=state.y+state.h/2+(-dx*Math.sin(angle)+dy*Math.cos(angle))*(state.flipY?-1:1);
+  return clamp?{x:Math.max(state.x,Math.min(state.x+state.w,x)),y:Math.max(state.y,Math.min(state.y+state.h,y))}:{x,y};
 }
 
 /** Render one brush/eraser path or a filled rounded rectangle on the annotation layer. */
 function paint(context, mark) {
-  context.save();context.globalAlpha=mark.opacity;
+  context.save();context.globalAlpha=mark.type==='eraser'?1:mark.opacity;
   context.globalCompositeOperation=mark.type==='eraser'?'destination-out':'source-over';
   context.fillStyle=context.strokeStyle=mark.color;
   if(mark.type==='rectangle'){
@@ -39,17 +53,19 @@ export function createImageModel(image, name, createCanvas = () => document.crea
   const width=image.naturalWidth || image.width,height=image.naturalHeight || image.height;
   if(width*height>40000000)throw new Error('Лимит изображения: 40 мегапикселей.');
   const history=new History();let state={x:0,y:0,w:width,h:height,turns:0},marks=[],layer;
-  function draw(canvas,maxSide=Infinity,draft){
-    const size=imageGeometry(width,height,state),scale=Math.min(1,maxSide/Math.max(size.width,size.height));
+  function draw(canvas,maxSide=Infinity,draft,preview=state){
+    const size=imageGeometry(width,height,preview),scale=Math.min(1,maxSide/Math.max(size.width,size.height));
     canvas.width=Math.max(1,Math.round(size.width*scale));canvas.height=Math.max(1,Math.round(size.height*scale));
     const context=canvas.getContext('2d');if(!context)throw new Error('Графический редактор недоступен.');
-    context.save();context.translate(canvas.width/2,canvas.height/2);context.rotate(state.turns*Math.PI/2);
-    context.drawImage(image,state.x,state.y,state.w,state.h,-state.w*scale/2,-state.h*scale/2,state.w*scale,state.h*scale);context.restore();
+    if(/\.jpe?g$/i.test(name)){context.fillStyle='#ffffff';context.fillRect(0,0,canvas.width,canvas.height);}
+    context.save();context.translate(canvas.width/2,canvas.height/2);context.rotate(imageAngle(preview));context.scale(preview.flipX?-1:1,preview.flipY?-1:1);
+    context.drawImage(image,preview.x,preview.y,preview.w,preview.h,-preview.w*scale/2,-preview.h*scale/2,preview.w*scale,preview.h*scale);context.restore();
     if(marks.length || draft){
       layer??=createCanvas();layer.width=canvas.width;layer.height=canvas.height;
       const overlay=layer.getContext('2d');if(!overlay)throw new Error('Слой рисования недоступен.');
-      overlay.translate(layer.width/2,layer.height/2);overlay.rotate(state.turns*Math.PI/2);overlay.scale(scale,scale);
-      overlay.translate(-state.x-state.w/2,-state.y-state.h/2);
+      overlay.translate(layer.width/2,layer.height/2);overlay.rotate(imageAngle(preview));overlay.scale(scale*(preview.flipX?-1:1),scale*(preview.flipY?-1:1));
+      overlay.translate(-preview.x-preview.w/2,-preview.y-preview.h/2);
+      overlay.beginPath();overlay.rect(preview.x,preview.y,preview.w,preview.h);overlay.clip();
       for(const mark of marks)paint(overlay,mark);if(draft)paint(overlay,draft);
       context.drawImage(layer,0,0);layer.width=layer.height=0;
     }
@@ -59,8 +75,9 @@ export function createImageModel(image, name, createCanvas = () => document.crea
     if(mark.type==='rectangle'){
       if(![mark.x,mark.y,mark.w,mark.h,mark.radius].every(Number.isFinite) || mark.x<0 || mark.y<0 || mark.w<1 || mark.h<1 || mark.x+mark.w>width+.001 || mark.y+mark.h>height+.001 || mark.radius<0)throw new Error('Выделение должно находиться внутри изображения.');
     }else if(!Number.isFinite(mark.width) || mark.width<1 || mark.width>400 || !Array.isArray(mark.points) || !mark.points.length || mark.points.length>20000 || mark.points.some(p=>!Number.isFinite(p.x) || !Number.isFinite(p.y) || p.x<0 || p.y<0 || p.x>width || p.y>height))throw new Error('Некорректный штрих.');
-    if(!mark.opacity)return;
+    if(!mark.opacity && mark.type!=='eraser')return;
     const command=structuredClone(mark);
+    if(command.type==='eraser')command.opacity=1;
     history.execute(()=>{marks.push(command);},()=>{marks.pop();});
   }
   return {width,height,history,get state(){return {...state};},get markCount(){return marks.length;},draw,addMark,
