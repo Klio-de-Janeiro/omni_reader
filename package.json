@@ -6,7 +6,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "start": "node scripts/serve.mjs",
-    "test": "node --test tests/validation.test.mjs tests/table-core.test.mjs tests/editors.test.mjs tests/rich-office.test.mjs tests/inline-modes.test.mjs tests/office-host.test.mjs tests/docx-entry-gestures.test.mjs tests/desktop-windows.test.mjs tests/markup.test.mjs tests/themes-painting.test.mjs tests/source-files.test.mjs tests/shortcuts-highlights-syntax.test.mjs tests/document-images-csv.test.mjs",
+    "test": "node --test tests/validation.test.mjs tests/table-core.test.mjs tests/editors.test.mjs tests/rich-office.test.mjs tests/inline-modes.test.mjs tests/office-host.test.mjs tests/docx-entry-gestures.test.mjs tests/desktop-windows.test.mjs tests/markup.test.mjs tests/themes-painting.test.mjs tests/source-files.test.mjs tests/shortcuts-highlights-syntax.test.mjs tests/document-images-csv.test.mjs tests/conversion-large-doc.test.mjs tests/speech.test.mjs",
     "test:e2e": "node tests/native/e2e.mjs",
     "native:sync": "node scripts/sync-native.mjs"
   },

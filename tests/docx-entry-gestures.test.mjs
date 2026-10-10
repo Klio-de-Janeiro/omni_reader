@@ -85,6 +85,10 @@ for (const ext of ['docx','pptx']) for (const editing of [false, true]) test(`Bu
     assert.equal((await touchedZoom).result, 3);
     assert.equal(pageJumps, beforePinch, 'Zoom must not navigate back to the page top');
     if(slide)assert.equal(w.document.querySelector('[data-slide-index]'),slide,'Pinch must not rebuild the slide');
+    if(ext==='docx'){
+      const printed=waitFor(data=>data.requestId===901);send({type:'print-html',requestId:901});const html=(await printed).result;
+      const printedDoc=new JSDOM(html);assert.ok(printedDoc.window.document.querySelectorAll('section.docx').length>=2);assert.match(printedDoc.window.document.body.textContent,/OMNI/);assert.equal(printedDoc.window.document.querySelector('script,iframe,object,[contenteditable]'),null);assert.equal(printedDoc.window.document.querySelector('#doc-scale').style.transform,'');printedDoc.window.close();
+    }
     touch(w, content, 'touchend', []);
     w.dispatchEvent(new w.Event('pagehide'));
     assert.equal(touch(w, content, 'touchstart', [[1, 0, 0], [2, 100, 0]]).defaultPrevented, false);

@@ -14,7 +14,7 @@ export function parseAddress(value) {
   return { row: Number(match[2]) - 1, col: column - 1 };
 }
 /** Parse CSV quotes, multiline fields and trailing empty cells without evaluation. */
-export function parseCsv(text, delimiter = ',') {
+export function parseCsv(text, delimiter = ',', {maxRows=100000,maxCols=512} = {}) {
   const rows = []; let row = [], field = '', quoted = false, closed = false;
   text = text.replace(/^\uFEFF/, '');
   const flush = () => { row.push(field); field = ''; closed = false; };
@@ -31,7 +31,7 @@ export function parseCsv(text, delimiter = ',') {
       flush(); rows.push(row); row = [];
     } else if (closed && ch.trim()) throw new Error('Некорректный CSV: символ после закрывающей кавычки.');
     else if (!closed) field += ch;
-    if (rows.length > 100000 || row.length > 511) throw new Error('Лимит CSV: 100 000 строк и 512 столбцов.');
+    if (rows.length > maxRows || row.length >= maxCols) throw new Error(`Лимит CSV: ${maxRows} строк и ${maxCols} столбцов.`);
   }
   if (quoted) throw new Error('Некорректный CSV: незакрытые кавычки.');
   if (field || row.length || closed) { flush(); rows.push(row); }

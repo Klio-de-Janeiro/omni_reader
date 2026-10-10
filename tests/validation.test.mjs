@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { validateFile, validateBytes, validateOffice } from '../dist/validation.js';
 const buffer = bytes => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-for (const ext of ['pdf', 'docx', 'pptx', 'wav', 'jpg', 'png', 'xlsx', 'csv']) test(`accepts real ${ext} fixture`, async () => {
+for (const ext of ['pdf', 'docx', 'pptx', 'wav', 'ogg', 'jpg', 'png', 'xlsx', 'csv']) test(`accepts real ${ext} fixture`, async () => {
   const bytes = await readFile(new URL(`./fixtures/sample.${ext}`, import.meta.url));
   assert.equal(validateFile({ name: `sample.${ext.toUpperCase()}`, size: bytes.length }), ext);
   validateBytes(buffer(bytes), ext);
@@ -11,7 +11,7 @@ for (const ext of ['pdf', 'docx', 'pptx', 'wav', 'jpg', 'png', 'xlsx', 'csv']) t
 test('rejects empty, unknown and oversized files', () => {
   assert.throws(() => validateFile({ name: 'a.pdf', size: 0 }));
   assert.throws(() => validateFile({ name: 'a.exe', size: 30 }));
-  assert.throws(() => validateFile({ name: 'a.docx', size: 33 * 1024 * 1024 }));
+  assert.throws(() => validateFile({ name: 'a.docx', size: 500000000 }));
 });
 test('rejects spoofed extensions and malformed Office containers', () => {
   assert.throws(() => validateBytes(new TextEncoder().encode('not a PDF').buffer, 'pdf'));

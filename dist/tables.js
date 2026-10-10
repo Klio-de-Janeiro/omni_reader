@@ -1,3 +1,4 @@
+import {openLargeCsv} from './large-files.js';
 import { columnName, parseAddress, parseCsv, detectDelimiter, rangeText } from './table-core.js';
 import { copyText } from './clipboard.js';
 import { createVisualZoom } from './gestures.js';
@@ -19,7 +20,7 @@ export async function openTable(file, root, context) {
     rows.forEach((row, r) => row.forEach((text, c) => { if (text) entries.push({ row: r, col: c, text }); }));
     sheets = [{ name: file.name, rows: rows.length, cols: rows.reduce((max, row) => Math.max(max, row.length), 1), merges: [], entries, cell: (r, c) => ({ text: rows[r]?.[c] || '', raw: rows[r]?.[c] || '', formula: '' }) }];
   }
-  if (csv) { const bytes = new Uint8Array(data); if (bytes[0] === 255 && bytes[1] === 254) encoding = 'utf-16le'; makeCsv(); } else sheets = await (await import('./vendor/xlsx.js')).readWorkbook(data);
+  if (csv) { const bytes = new Uint8Array(data); if (bytes[0] === 255 && bytes[1] === 254) encoding = 'utf-16le'; try{makeCsv();}catch(error){if(/Лимит/.test(error.message))return openLargeCsv(file,root,context);throw error;} } else sheets = await (await import('./vendor/xlsx.js')).readWorkbook(data);
   if (context.signal.aborted) throw new DOMException('Aborted', 'AbortError');
   const panel = node('div', null, 'table-panel');
   const tools = node('div', null, 'table-tools');

@@ -8,6 +8,12 @@ import android.database.Cursor;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.CancellationSignal;
+import android.os.ParcelFileDescriptor;
+import android.print.PrintDocumentAdapter;
+import android.print.PrintAttributes;
+import android.print.PrintManager;
+import android.print.PageRange;
 import android.provider.OpenableColumns;
 import android.util.Base64;
 import android.view.View;
@@ -39,7 +45,7 @@ import android.content.res.Configuration;
 public final class MainActivity extends Activity {
     private static final String ORIGIN = "https://appassets.androidplatform.net";
     private static final String START = ORIGIN + "/index.html";
-    private static final long MAX_BYTES = 100L * 1024 * 1024;
+    private static final long MAX_BYTES = 500_000_000L - 1;
     private static final int PICK_FILE = 10;
     private static final int SAVE_FILE = 11;
     private WebView web;
@@ -51,6 +57,10 @@ public final class MainActivity extends Activity {
     private long exportBytes;
     private String exportName;
     private boolean saving;
+    private WebView pdfView;
+    private File pdfHtml;
+    private String pdfToken, pdfError;
+    private boolean pdfOpened;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -107,6 +117,11 @@ public final class MainActivity extends Activity {
             if (!"GET".equals(request.getMethod()) || !"https".equals(uri.getScheme()) || !"appassets.androidplatform.net".equals(uri.getHost())) return errorResponse();
             String path = uri.getPath();
             if (path == null || path.contains("..") || path.indexOf('\0') >= 0) return errorResponse();
+            if (pdfHtml != null && path.equals("/native-print/" + pdfToken)) {
+                HashMap<String, String> headers = new HashMap<>();
+                headers.put("Content-Security-Policy", "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:;");
+                return new WebResourceResponse("text/html", "UTF-8", 200, "OK", headers, new FileInputStream(pdfHtml));
+            }
             if (pendingUri != null && path.equals("/native/" + pendingToken)) {
                 InputStream stream = getContentResolver().openInputStream(pendingUri);
                 if (stream == null) return errorResponse();
@@ -174,7 +189,7 @@ public final class MainActivity extends Activity {
             case "pending": return pendingMetadata();
             case "import-done": pendingUri = null; pendingToken = null; return "ok";
             case "export-start": {
-                if (saving) throw new IOException("Дождитесь завершения сохранения.");
+                if (saving || pdfToken != null) throw new IOException("Дождитесь завершения сохранения.");
                 closeExport();
                 exportName = new File(command.getString("name").replace('\\', '/')).getName();
                 if (exportName.isEmpty() || exportName.length() > 240) throw new IOException("Недопустимое имя.");
@@ -187,7 +202,7 @@ public final class MainActivity extends Activity {
                 if (data.length() > 70000) throw new IOException("Слишком большой блок.");
                 byte[] chunk = Base64.decode(data, Base64.DEFAULT);
                 exportBytes += chunk.length;
-                if (exportBytes > MAX_BYTES) { closeExport(); throw new IOException("Файл больше 100 МиБ."); }
+                if (exportBytes > MAX_BYTES) { closeExport(); throw new IOException("Размер файла должен быть меньше 500 МБ."); }
                 exportStream.write(chunk); return "ok";
             }
             case "export-finish": {
@@ -198,9 +213,56 @@ public final class MainActivity extends Activity {
                 intent.putExtra(Intent.EXTRA_TITLE, exportName); saving = true;
                 try { startActivityForResult(intent, SAVE_FILE); } catch (RuntimeException error) { saving = false; closeExport(); throw error; } return "ok";
             }
+            case "pdf-render": startPdf(command.getString("name")); return "ok";
+            case "pdf-status": {
+                JSONObject status = new JSONObject().put("opened", pdfOpened);
+                if (pdfError != null) status.put("error", pdfError);
+                return status.toString();
+            }
+            case "pdf-close": closePdf(); return "ok";
             case "export-cancel": if (!saving) closeExport(); return "ok";
             default: throw new IOException("Неизвестная команда.");
         }
+    }
+
+    /** Use Android's supported print flow; the user selects Save as PDF. */
+    private void startPdf(String name) throws Exception {
+        if (pdfToken != null || exportStream == null || exportFile == null) throw new IOException("Нет документа для PDF.");
+        exportStream.close(); exportStream = null;
+        pdfHtml = exportFile; exportFile = null; pdfToken = UUID.randomUUID().toString(); pdfError = null; pdfOpened = false;
+        final String token = pdfToken;
+        pdfView = new WebView(this);
+        pdfView.getSettings().setJavaScriptEnabled(false);
+        pdfView.getSettings().setAllowFileAccess(false);
+        pdfView.getSettings().setAllowContentAccess(false);
+        pdfView.setWebViewClient(new WebViewClient() {
+            private boolean started;
+            @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) { return localResponse(request); }
+            @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { return true; }
+            @Override public void onPageFinished(WebView view, String url) {
+                if (started || !token.equals(pdfToken) || !url.equals(ORIGIN + "/native-print/" + token)) return;
+                started = true;
+                try {
+                    final PrintDocumentAdapter delegate = view.createPrintDocumentAdapter(name);
+                    PrintDocumentAdapter adapter = new PrintDocumentAdapter() {
+                        @Override public void onStart() { delegate.onStart(); }
+                        @Override public void onLayout(PrintAttributes oldAttributes, PrintAttributes newAttributes, CancellationSignal signal, LayoutResultCallback callback, Bundle extras) { delegate.onLayout(oldAttributes, newAttributes, signal, callback, extras); }
+                        @Override public void onWrite(PageRange[] pages, ParcelFileDescriptor destination, CancellationSignal signal, WriteResultCallback callback) { delegate.onWrite(pages, destination, signal, callback); }
+                        @Override public void onFinish() { delegate.onFinish(); if (token.equals(pdfToken)) closePdf(); }
+                    };
+                    PrintManager manager = (PrintManager) getSystemService(PRINT_SERVICE);
+                    if (manager == null) throw new IOException("Служба печати недоступна.");
+                    PrintAttributes attributes = new PrintAttributes.Builder().setMediaSize(PrintAttributes.MediaSize.ISO_A4).setMinMargins(PrintAttributes.Margins.NO_MARGINS).setColorMode(PrintAttributes.COLOR_MODE_COLOR).build();
+                    manager.print(name, adapter, attributes); pdfOpened = true;
+                } catch (Exception error) { pdfError = "Не удалось открыть печать PDF: " + error.getMessage(); }
+            }
+        });
+        pdfView.loadUrl(ORIGIN + "/native-print/" + token);
+    }
+    private void closePdf() {
+        pdfToken = null;
+        if (pdfView != null) pdfView.destroy(); pdfView = null;
+        if (pdfHtml != null) pdfHtml.delete(); pdfHtml = null;
     }
 
     private String pendingMetadata() throws Exception {
@@ -260,6 +322,6 @@ public final class MainActivity extends Activity {
         exportFile = null;
     }
     private void toast(String message) { Toast.makeText(this, message, Toast.LENGTH_LONG).show(); }
-    @Override public void onBackPressed() { web.evaluateJavascript("(function(){if(document.getElementById('theme-dialog').open){document.getElementById('theme-dialog').close();return 'stay';}if(document.getElementById('help-dialog').open){document.getElementById('help-dialog').close();return 'stay';}if(!document.getElementById('reader').hidden){document.getElementById('close').click();return 'stay';}return 'exit';})()", result -> { if ("\"exit\"".equals(result)) finish(); }); }
-    @Override protected void onDestroy() { if (chooser != null) chooser.onReceiveValue(null); if (!saving) closeExport(); web.destroy(); super.onDestroy(); }
+    @Override public void onBackPressed() { web.evaluateJavascript("(function(){var dialog=document.querySelector('dialog[open]');if(dialog){dialog.close('cancel');return 'stay';}if(document.body.classList.contains('focus-mode')){document.getElementById('focus-exit').click();return 'stay';}if(!document.getElementById('reader').hidden){document.getElementById('close').click();return 'stay';}return 'exit';})()", result -> { if ("\"exit\"".equals(result)) finish(); }); }
+    @Override protected void onDestroy() { if (chooser != null) chooser.onReceiveValue(null); if (!saving) closeExport(); closePdf(); web.destroy(); super.onDestroy(); }
 }

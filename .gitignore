@@ -13,3 +13,6 @@ desktop/www/
 desktop/node_modules/
 *.keystore
 *.jks
+
+.signing/
+android/keystore.properties

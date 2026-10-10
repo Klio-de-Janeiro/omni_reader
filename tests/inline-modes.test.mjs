@@ -67,13 +67,13 @@ function pdfFixture(w,delayed=false){
   const root=document.querySelector('#office'),reported=[];Object.defineProperties(root,{clientWidth:{value:900},clientHeight:{value:600}});root.getBoundingClientRect=()=>({left:0,right:900,top:0,bottom:600,height:600,width:900});
   const rect=w.HTMLElement.prototype.getBoundingClientRect;w.HTMLElement.prototype.getBoundingClientRect=function(){
     if(this.classList.contains('pdf-pages')){
-      const width=parseFloat(this.style.width),height=[...this.children].filter(el=>!el.hidden).reduce((sum,el)=>sum+parseFloat(el.style.height)+20,0);
+      const scale=Number(this.style.transform.match(/scale\(([^)]+)\)/)?.[1] || 1),width=parseFloat(this.style.width)*scale,height=[...this.children].filter(el=>!el.hidden).reduce((sum,el)=>sum+parseFloat(el.style.height)+20,0)*scale;
       const left=(parseFloat(this.style.left) || 0)-root.scrollLeft,top=(parseFloat(this.style.top) || 0)-root.scrollTop;
       return {left,top,width,height,right:left+width,bottom:top+height};
     }
     if(!this.classList.contains('pdf-paper'))return rect.call(this);if(this.hidden)return {top:0,height:0,bottom:0};
-    const stack=this.parentElement,frame=stack.getBoundingClientRect(),width=parseFloat(this.style.width),left=frame.left+Math.max(0,(frame.width-width)/2);
-    let top=20+frame.top;for(const el of stack.children){if(el===this)break;if(!el.hidden)top+=parseFloat(el.style.height)+20;}const height=parseFloat(this.style.height);return {left,right:left+width,top,height,bottom:top+height,width};
+    const stack=this.parentElement,scale=Number(stack.style.transform.match(/scale\(([^)]+)\)/)?.[1] || 1),frame=stack.getBoundingClientRect(),width=parseFloat(this.style.width)*scale,left=frame.left+Math.max(0,(frame.width-width)/2);
+    let top=20*scale+frame.top;for(const el of stack.children){if(el===this)break;if(!el.hidden)top+=(parseFloat(el.style.height)+20)*scale;}const height=parseFloat(this.style.height)*scale;return {left,right:left+width,top,height,bottom:top+height,width};
   };
   let cancelled=false;const doc={numPages:80,async getPage(n){return {getViewport:({scale})=>({width:600*scale,height:800*scale,scale}),async getTextContent(){return {items:[{str:'marker-'+n}]};},cleanup(){},render(){let cancel;const promise=delayed && n===42?new Promise((resolve,reject)=>{const timer=setTimeout(resolve,1000);cancel=()=>{cancelled=true;clearTimeout(timer);reject(Object.assign(new Error('Cancelled'),{name:'RenderingCancelledException'}));};}):Promise.resolve();return {promise,cancel(){cancel?.();}};}};}};
   class TextLayer{constructor(o){this.options=o;}async render(){const s=document.createElement('span');s.textContent=this.options.textContentSource.items[0].str;this.options.container.append(s);}cancel(){}}
@@ -107,5 +107,22 @@ test('PDF pinch retains the exact point inside a scrolled page in both viewing m
       assert.ok(Math.abs(after.left+rx*after.width-point.x)<1e-8);assert.ok(Math.abs(after.top+ry*after.height-point.y)<1e-8);
       assert.ok(f.root.querySelectorAll('canvas').length<=4);
     }
+  }finally{f.controller.abort();w.close();}
+});
+
+test('PDF zoom updates immediately without clearing pages or text, then sharpens the bitmap',async()=>{
+  const w=setup(),f=pdfFixture(w);
+  try{
+    const viewer=await renderPdfDocument(f.doc,f.pdfjs,f.root,f.context);
+    const paper=f.root.querySelector('.pdf-paper'),canvas=paper.querySelector('canvas'),text=paper.querySelector('.textLayer'),width=canvas.width,layout=paper.style.cssText;
+    for(const zoom of [1.2,1.5,2,2.5]){
+      viewer.setZoom(zoom,{x:180,y:240});
+      assert.equal(paper.querySelector('canvas'),canvas,'Keep the visible bitmap throughout the gesture');
+      assert.equal(paper.querySelector('.textLayer'),text);assert.equal(paper.style.cssText,layout);
+      assert.equal(f.root.querySelector('.pdf-pages').style.transform,`scale(${zoom})`);
+    }
+    await new Promise(resolve=>setTimeout(resolve,300));
+    assert.notEqual(paper.querySelector('canvas'),canvas);assert.ok(paper.querySelector('canvas').width>width);
+    assert.equal(paper.querySelector('.textLayer'),text);assert.equal(canvas.width,0);
   }finally{f.controller.abort();w.close();}
 });

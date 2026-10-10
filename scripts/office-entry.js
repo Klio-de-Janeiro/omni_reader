@@ -33,7 +33,7 @@ async function openDocument(data){
     container.className='pptx';
     viewer=new PptxViewer(container,{
       fitMode:'contain',lazySlides:true,lazyMedia:true,pdfjs:false,
-      zipLimits:{...RECOMMENDED_ZIP_LIMITS,maxEntries:3000,maxTotalUncompressedBytes:128*1024*1024},
+      zipLimits:{...RECOMMENDED_ZIP_LIMITS,maxEntries:65534,maxEntryUncompressedBytes:512*1024*1024,maxTotalUncompressedBytes:2048*1024*1024,maxMediaBytes:1024*1024*1024,maxConcurrency:2},
       onSlideChange:index=>modes.slideChanged(index),
       onSlideRendered:(index,el)=>editor?.mountPptx(index,el),
       onSlideUnmounted:index=>editor?.releasePptx(index),
@@ -60,6 +60,22 @@ async function openDocument(data){
 async function message(data){
   if(data.type==='open' && !token){await openDocument(data);return;}
   if(!token || data.token!==token)return;
+  if(data.type==='print-html'){
+    if(!docScale)throw new Error('Печать поддерживается для DOCX.');
+    const copy=docScale.cloneNode(true);copy.removeAttribute('style');
+    for(const el of copy.querySelectorAll('[hidden]'))el.removeAttribute('hidden');
+    for(const el of copy.querySelectorAll('script,iframe,object,embed,link,base'))el.remove();
+    for(const el of copy.querySelectorAll('*'))for(const attr of [...el.attributes]){
+      if(/^on/i.test(attr.name) || ['contenteditable','href','srcdoc'].includes(attr.name) || attr.name==='src' && !attr.value.startsWith('data:image/'))el.removeAttribute(attr.name);
+    }
+    let pages='';const length=/^\d+(?:\.\d+)?(?:pt|px|mm|cm|in)$/;
+    [...copy.querySelectorAll('section.docx')].forEach((section,i)=>{
+      section.style.display='block';const width=section.style.width,height=section.style.minHeight || section.style.height;
+      if(length.test(width) && length.test(height)){section.style.page='omniPage'+i;pages+='@page omniPage'+i+'{size:'+width+' '+height+';margin:0}';}
+    });
+    const css='@page{size:A4;margin:0}html,body{margin:0;background:white;color:black}#doc-scale,.docx-wrapper{display:block!important;width:auto!important;height:auto!important;transform:none!important;padding:0!important;background:white!important}.docx-wrapper>section.docx{display:block!important;margin:0!important;box-shadow:none!important;break-after:page}.docx-wrapper>section.docx:last-child{break-after:auto}img{max-width:100%}*{print-color-adjust:exact;-webkit-print-color-adjust:exact}';
+    send({type:'reply',requestId:data.requestId,result:'<!doctype html><html><head><meta charset="utf-8"><style>'+css+pages+'</style></head><body>'+copy.outerHTML+'</body></html>'});
+  }
   if(data.type==='shortcuts')applyShortcutBindings(data.bindings,window);
   if(data.type==='highlight-add')send({type:'reply',requestId:data.requestId,result:highlights.add(data.color)});
   if(data.type==='highlight-set'){highlights.set(data.records);send({type:'reply',requestId:data.requestId,result:true});}

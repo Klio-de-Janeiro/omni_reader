@@ -7,7 +7,7 @@ import { openViewer } from '../dist/viewers.js';
 import { openEditor } from '../dist/editors/ui.js';
 import { textCodec, formatJson } from '../dist/text-files.js';
 import { parseNotebook } from '../dist/notebooks.js';
-import { validateFile, validateBytes } from '../dist/validation.js';
+import { validateFile, validateBytes, validateBlob } from '../dist/validation.js';
 import { isFullscreenShortcut, isThemeShortcut, zoomShortcut, shortcutCommand, getShortcutBindings, shortcutLabel } from '../dist/shortcuts.js';
 import { initShortcutSettings } from '../dist/shortcut-settings.js';
 import { createReadHighlights } from '../dist/read-highlights.js';
@@ -40,7 +40,7 @@ test('New file formats accept empty text, .env and uppercase extensions without 
     assert.equal(validateFile({ name, size: 0 }), ext);
     validateBytes(new ArrayBuffer(0), ext);
     assert.throws(() => validateBytes(new Uint8Array([0, 1, 2]).buffer, ext), /двоичные/);
-    assert.throws(() => validateFile({ name, size: 40 * 1024 * 1024 }), /Лимит/);
+    assert.throws(() => validateFile({ name, size: 500000000 }), /500/);
   }
   assert.equal(validateFile({ name: 'Notebook.IPYNB', size: 300 }), 'ipynb');
 });
@@ -161,9 +161,9 @@ test('Fullscreen host exposes source editing and exports .env copies without an 
   const html = await readFile(new URL('../dist/index.html', import.meta.url), 'utf8'), f = fixture(html), w = f.w;
   const record = { id: 'env', name: '.env', ext: 'env', blob: new File([samples.env], '.env'), size: samples.env.length, saved: true };
   let exported;
-  Object.assign(w, { File, TextEncoder, normalizeMode: v => v === 'page' ? 'page' : 'scroll', isFullscreenShortcut, isThemeShortcut, zoomShortcut, initThemes, shortcutCommand, getShortcutBindings, shortcutLabel, initShortcutSettings, createReadHighlights,
+  Object.assign(w, { initConversion:()=>({sync(){}}), File, TextEncoder, normalizeMode: v => v === 'page' ? 'page' : 'scroll', isFullscreenShortcut, isThemeShortcut, zoomShortcut, initThemes, shortcutCommand, getShortcutBindings, shortcutLabel, initShortcutSettings, createReadHighlights,
     copyText: async () => {}, isNative: true, hasDocumentWindows: false, saveOriginal: async record => { exported = record; },
-    setNativeFullscreen: () => true, setNativeDocument() {}, connectNativeFiles() {}, listFiles: async () => [record], saveFile: async () => {}, formatSize: () => '1 B', validateFile, validateBytes, openViewer, openEditor });
+    setNativeFullscreen: () => true, setNativeDocument() {}, connectNativeFiles() {}, listFiles: async () => [record], saveFile: async () => {}, formatSize: () => '1 B', validateFile, validateBytes, validateBlob, openViewer, openEditor });
   w.URL.createObjectURL = () => 'blob:test'; w.URL.revokeObjectURL = () => {};
   try {
     let app = await readFile(new URL('../dist/app.js', import.meta.url), 'utf8');

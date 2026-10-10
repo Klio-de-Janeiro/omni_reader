@@ -36,9 +36,11 @@
       "main.cjs",
       "preload.cjs",
       "document-images.cjs",
+      "speech.cjs",
       "package.json",
       "www/**/*"
     ],
+    "extraResources": [{ "from": "speech", "to": "speech", "filter": ["transcribe.py"] }],
     "win": {
       "target": "nsis",
       "icon": "../dist/icon.ico",
@@ -54,11 +56,13 @@
       {
         "ext": [
           "pdf",
+          "doc",
           "docx",
           "pptx",
           "xlsx",
           "csv",
           "wav",
+          "ogg",
           "jpg",
           "jpeg",
           "png",

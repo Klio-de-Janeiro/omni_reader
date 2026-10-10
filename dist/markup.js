@@ -56,7 +56,7 @@ export async function openMarkupEditor(record, root, options) {
   save.className = 'primary'; bar.append(undo, redo, preview, save, close);
   const canvas = document.createElement('div'); canvas.className = 'markup-edit-canvas';
   const input = document.createElement('textarea'); input.className = 'markdown-source'; input.value = original;
-  input.spellcheck = false; input.maxLength = 2 * 1024 * 1024; input.setAttribute('aria-label', 'Исходный текст Markdown');
+  input.spellcheck = false; input.maxLength = 8 * 1024 * 1024; input.setAttribute('aria-label', 'Исходный текст Markdown');
   const article = document.createElement('article'); article.className = 'markdown-document'; article.hidden = true;
   const history=new History();let draft=original,selection={start:0,end:0};
   canvas.append(input, article); panel.append(bar, canvas); root.replaceChildren(panel);

@@ -11,7 +11,7 @@ import { openEditor } from '../dist/editors/ui.js';
 import { renderMarkup } from '../dist/vendor/markdown.js';
 import { renderNotebook } from '../dist/notebooks.js';
 import { textNavigation } from '../dist/text-files.js';
-import { validateFile, validateBytes } from '../dist/validation.js';
+import { validateFile, validateBytes, validateBlob } from '../dist/validation.js';
 import { initThemes } from '../dist/themes.js';
 
 function fixture(html='<!doctype html><div id="root"></div>') {
@@ -137,7 +137,7 @@ test('Actual fullscreen host switches Ctrl+D, applies Ctrl+E, preserves draft, r
   const f=fixture(await readFile(new URL('../dist/index.html',import.meta.url),'utf8')),w=f.w;
   const source='// comment\nconst value = "before";',record={id:'code',name:'sample.js',ext:'js',blob:new File([source],'sample.js'),size:source.length,saved:true};
   let exported;
-  Object.assign(w,{File,TextEncoder,normalizeMode:value=>value==='page'?'page':'scroll',shortcutCommand,getShortcutBindings,shortcutLabel,initShortcutSettings,createReadHighlights,initThemes,copyText:async()=>{},isNative:true,hasDocumentWindows:false,saveOriginal:async record=>{exported=record;},setNativeFullscreen:()=>true,setNativeDocument(){},connectNativeFiles(){},listFiles:async()=>[record],saveFile:async()=>{},removeFile:async()=>{},formatSize:()=> '1 B',validateFile,validateBytes,openViewer,openEditor});
+  Object.assign(w,{initConversion:()=>({sync(){}}),File,TextEncoder,normalizeMode:value=>value==='page'?'page':'scroll',shortcutCommand,getShortcutBindings,shortcutLabel,initShortcutSettings,createReadHighlights,initThemes,copyText:async()=>{},isNative:true,hasDocumentWindows:false,saveOriginal:async record=>{exported=record;},setNativeFullscreen:()=>true,setNativeDocument(){},connectNativeFiles(){},listFiles:async()=>[record],saveFile:async()=>{},removeFile:async()=>{},formatSize:()=> '1 B',validateFile,validateBytes,validateBlob,openViewer,openEditor});
   w.URL.createObjectURL=()=> 'blob:test';w.URL.revokeObjectURL=()=>{};
   try {
     let app=await readFile(new URL('../dist/app.js',import.meta.url),'utf8');app=app.replace(/^import .*;\n/gm,'').replace("const { openEditor } = await import('./editors/ui.js');",'const { openEditor } = window;');w.eval(app);

@@ -109,7 +109,7 @@ test('Desktop preload derives the source from the selected File and ignores a su
   });
   await bridge.openFile(file, { sourcePath: '/private/secret.md' });
   assert.equal(calls[0][0], 'omni-open-file'); assert.equal(calls[0][1].sourcePath, '/selected/sample.md');
-  assert.equal(new TextDecoder().decode(calls[0][1].bytes), '# sample');
+  assert.equal(calls[0][1].bytes, undefined);
 });
 
 test('CSV cells accept direct typing and paste, preserve quoted values, and preview/export the same draft', async () => {

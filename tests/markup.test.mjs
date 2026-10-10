@@ -6,7 +6,7 @@ import { renderMarkup } from '../dist/vendor/markdown.js';
 import { openViewer } from '../dist/viewers.js';
 import { openMarkupEditor, decodeMarkup } from '../dist/markup.js';
 import { openEditor } from '../dist/editors/ui.js';
-import { validateFile, validateBytes } from '../dist/validation.js';
+import { validateFile, validateBytes, validateBlob } from '../dist/validation.js';
 import { isFullscreenShortcut, isThemeShortcut, zoomShortcut, shortcutCommand, getShortcutBindings, shortcutLabel } from '../dist/shortcuts.js';
 import { initShortcutSettings } from '../dist/shortcut-settings.js';
 import { createReadHighlights } from '../dist/read-highlights.js';
@@ -67,7 +67,7 @@ test('Markdown and TeX accept Unicode and reject binary/oversized input', () => 
     assert.equal(validateFile({ name: `A.${ext.toUpperCase()}`, size: utf8.length }), ext);
     validateBytes(utf8.buffer, ext); assert.equal(decodeMarkup(utf8.buffer), '# Привет');
     assert.throws(() => validateBytes(new Uint8Array([0, 1, 2]).buffer, ext), /двоичные/);
-    assert.throws(() => validateFile({ name: `a.${ext}`, size: 3 * 1024 * 1024 }), /Лимит/);
+    assert.throws(() => validateFile({ name: `a.${ext}`, size: 500000000 }), /500/);
   }
   assert.equal(decodeMarkup(new Uint8Array([255, 254, 35, 0, 32, 0, 31, 4]).buffer), '# П');
 });
@@ -98,16 +98,17 @@ test('Fullscreen button edits Markdown, previews the draft and saves a copy; Ctr
   const html = await readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
   const w = new JSDOM(html, { pretendToBeVisual: true, runScripts: 'outside-only', url: 'https://omni.test/' }).window, restore = globals(w);
   const record = { id: 'one', name: 'notes.md', ext: 'md', blob: new File([source], 'notes.md'), size: new TextEncoder().encode(source).length, saved: true };
-  Object.assign(w, { File, TextEncoder, normalizeMode: v => v === 'page' ? 'page' : 'scroll', isFullscreenShortcut, isThemeShortcut, zoomShortcut, initThemes, shortcutCommand, getShortcutBindings, shortcutLabel, initShortcutSettings, createReadHighlights,
+  Object.assign(w, { initConversion:()=>({sync(){}}), File, TextEncoder, normalizeMode: v => v === 'page' ? 'page' : 'scroll', isFullscreenShortcut, isThemeShortcut, zoomShortcut, initThemes, shortcutCommand, getShortcutBindings, shortcutLabel, initShortcutSettings, createReadHighlights,
     copyText: async () => {}, isNative: true, hasDocumentWindows: false, saveOriginal: async () => true,
     setNativeFullscreen: () => true, setNativeDocument() {}, connectNativeFiles() {},
-    listFiles: async () => [record], saveFile: async () => {}, formatSize: () => '1 B', validateFile, validateBytes, openViewer, openEditor });
+    listFiles: async () => [record], saveFile: async () => {}, formatSize: () => '1 B', validateFile, validateBytes, validateBlob, openViewer, openEditor });
   w.URL.createObjectURL = () => 'blob:test'; w.URL.revokeObjectURL = () => {};
   const key = data => { const event = new w.KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...data }); (w.document.querySelector('textarea:not([hidden])') || w.document).dispatchEvent(event); return event; };
   try {
     let app = await readFile(new URL('../dist/app.js', import.meta.url), 'utf8');
     app = app.replace(/^import .*;\n/gm, '').replace("const { openEditor } = await import('./editors/ui.js');", 'const { openEditor } = window;');
-    w.eval(app); await until(() => w.document.querySelector('.file-open'));
+    w.localStorage.setItem('omni.autosave','true');w.eval(app); await until(() => w.document.querySelector('.file-open'));
+    const remember=w.document.querySelector('#remember');assert.equal(remember.checked,true);remember.checked=false;remember.dispatchEvent(new w.Event('change'));assert.equal(w.localStorage.getItem('omni.autosave'),'false');w.dispatchEvent(new w.StorageEvent('storage',{key:'omni.autosave',newValue:'true'}));assert.equal(remember.checked,true);remember.checked=false;remember.dispatchEvent(new w.Event('change'));
     await w.selectFile('one'); assert.equal(w.document.body.classList.contains('focus-mode'), true);
     key({ctrlKey:true,key:'ч',code:'KeyX'});assert.equal(w.document.documentElement.dataset.theme,'normal');assert.equal(w.document.body.classList.contains('focus-mode'),true);
     key({ctrlKey:true,key:'я',code:'KeyZ'});assert.equal(w.document.body.classList.contains('focus-mode'),false);

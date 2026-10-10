@@ -1,3 +1,5 @@
+import { LARGE_TEXT_BYTES, openLargeText, openLargeCsv } from './large-files.js';
+import { extractDocText } from './legacy-doc.js';
 import { renderPdfDocument } from './pdf-viewer.js';
 import { bindZoomGestures, createVisualZoom } from './gestures.js';
 import { openTable } from './tables.js';
@@ -19,7 +21,12 @@ async function openPdf(file, root, context) {
   const pdfjs = await import('./vendor/pdf/pdf.mjs');
   if (context.signal.aborted) throw new DOMException('Aborted', 'AbortError');
   pdfjs.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdf/pdf.worker.mjs', import.meta.url).href;
-  const loading = pdfjs.getDocument({ data: await file.arrayBuffer(), isEvalSupported: false, cMapUrl: new URL('./vendor/pdf/cmaps/', import.meta.url).href, cMapPacked: true, standardFontDataUrl: new URL('./vendor/pdf/standard_fonts/', import.meta.url).href, wasmUrl: new URL('./vendor/pdf/wasm/', import.meta.url).href });
+  class BlobRange extends pdfjs.PDFDataRangeTransport {
+    constructor(){super(file.size,new Uint8Array(),false);this.cancelled=false;}
+    requestDataRange(begin,end){void file.slice(begin,end).arrayBuffer().then(data=>{if(!this.cancelled)this.onDataRange(begin,new Uint8Array(data));}).catch(error=>context.onWarning?.(error));}
+    abort(){this.cancelled=true;}
+  }
+  const loading = pdfjs.getDocument({ range:new BlobRange(),length:file.size,rangeChunkSize:1024*1024,disableAutoFetch:true,disableStream:true, isEvalSupported: false, cMapUrl: new URL('./vendor/pdf/cmaps/', import.meta.url).href, cMapPacked: true, standardFontDataUrl: new URL('./vendor/pdf/standard_fonts/', import.meta.url).href, wasmUrl: new URL('./vendor/pdf/wasm/', import.meta.url).href });
   const cleanup = () => { void loading.destroy(); };
   context.signal.addEventListener('abort', cleanup, { once: true });
   if (context.signal.aborted) { cleanup(); throw new DOMException('Aborted', 'AbortError'); }
@@ -45,12 +52,12 @@ async function openOffice(file, root, context) {
   context.signal.addEventListener('abort',()=>{root.ownerDocument.defaultView.removeEventListener('omni-theme-change',theme);root.ownerDocument.defaultView.removeEventListener('omni-shortcuts-change',shortcuts);},{once:true});
   const rpc=data=>new Promise((resolve,reject)=>{
     if(context.signal.aborted){reject(new DOMException('Aborted','AbortError'));return;}
-    const id=++requestId,timer=setTimeout(()=>{requests.delete(id);reject(new Error('Документ не ответил. Повторите действие.'));},15000);
+    const id=++requestId,timer=setTimeout(()=>{requests.delete(id);reject(new Error('Документ не ответил. Повторите действие.'));},180000);
     requests.set(id,{resolve,reject,timer});post({...data,requestId:id});
   });
   let listener;
   await new Promise((resolve,reject)=>{
-    const timeout=setTimeout(()=>reject(new Error('Просмотр занял больше 30 секунд.')),30000);
+    const timeout=setTimeout(()=>reject(new Error('Документ не удалось обработать за 3 минуты.')),180000);
     listener=event=>{
       if(event.source!==frame.contentWindow || !event.data)return;const data=event.data;
       if(data.type==='ready' && !initialized){initialized=true;post({type:'open',ext:context.ext,buffer,viewMode:context.viewMode,blocks:context.blocks,bindings:getShortcutBindings(root.ownerDocument.defaultView)},[buffer]);return;}
@@ -80,7 +87,7 @@ async function openOffice(file, root, context) {
     setViewMode:mode=>rpc({type:'view-mode',mode}),find:query=>rpc({type:'find',query}),
     flush:()=>rpc({type:'flush'}),command:data=>post({type:'edit-command',...data}),
     sync:blocks=>post({type:'edit-sync',blocks}),setBusy:busy=>post({type:'edit-busy',busy}),
-    copyText:()=>selectedText,
+    copyText:()=>selectedText,printHTML:()=>rpc({type:'print-html'}),
     addHighlight:color=>rpc({type:'highlight-add',color}),setHighlights:records=>rpc({type:'highlight-set',records}),clearHighlights:()=>rpc({type:'highlight-clear'}),
   };
 }
@@ -115,6 +122,9 @@ async function openImage(file, root, context) {
 /** Play browser-supported WAV codecs using native accessible media controls. */
 async function openAudio(file, root, context) {
   const url = URL.createObjectURL(file);
+  let knownDuration;
+  const metadata = context.ext === 'ogg' ? import('./audio-conversion.js').then(module => module.readOggInfo(file)).then(info => { knownDuration = info.duration; }).catch(() => {}) : Promise.resolve();
+  const duration = () => Number.isFinite(audio.duration) ? audio.duration : knownDuration ?? Infinity;
   const panel = element('div', 'audio-panel');
   const mark = element('div', 'audio-mark', '♫'); mark.setAttribute('aria-hidden', 'true');
   const audio = element('audio'); audio.controls = true; audio.preload = 'metadata'; audio.src = url;
@@ -130,27 +140,33 @@ async function openAudio(file, root, context) {
   seek.onclick = () => {
     const parts = input.value.trim().split(':').map(Number);
     const time = parts.length === 1 ? parts[0] : parts.length === 2 ? parts[0] * 60 + parts[1] : NaN;
-    if (!input.value.trim() || !Number.isFinite(time) || time < 0 || time > audio.duration) { context.onWarning(new Error('Укажите время в секундах или мм:сс в пределах записи.')); return; }
+    if (!input.value.trim() || !Number.isFinite(time) || time < 0 || time > duration()) { context.onWarning(new Error('Укажите время в секундах или мм:сс в пределах записи.')); return; }
     audio.currentTime = time;
   };
   input.onkeydown = event => { if (event.key === 'Enter') seek.click(); };
   backward.onclick = () => { audio.currentTime = Math.max(0, audio.currentTime - 10); };
-  forward.onclick = () => { audio.currentTime = Math.min(audio.duration, audio.currentTime + 10); };
+  forward.onclick = () => { audio.currentTime = Math.min(duration(), audio.currentTime + 10); };
   seekBar.append(backward, input, seek, forward);
   panel.append(mark, audio, label, seekBar); root.replaceChildren(panel);
+
   context.signal.addEventListener('abort', () => { audio.pause(); audio.removeAttribute('src'); audio.load(); URL.revokeObjectURL(url); }, { once: true });
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Не удалось прочитать аудио за 15 секунд.')), 15000);
     const finish = fn => value => { clearTimeout(timer); fn(value); };
     audio.addEventListener('loadedmetadata', finish(resolve), { once: true });
-    audio.addEventListener('error', finish(() => reject(new Error('Браузер не поддерживает кодек этого WAV или файл повреждён. Используйте WAV PCM.'))), { once: true });
+    audio.addEventListener('error', finish(() => reject(new Error('Не удалось воспроизвести аудио: файл повреждён или кодек не поддерживается. Для OGG обновите браузер или Android System WebView.'))), { once: true });
     context.signal.addEventListener('abort', finish(() => reject(new DOMException('Aborted', 'AbortError'))), { once: true });
   });
+  await metadata;
+  if (window.omniDesktop?.speechRun) { const { mountSpeech } = await import('./speech-ui.js'); if (!context.signal.aborted) mountSpeech(panel, file, context); }
   return {};
 }
 export async function openViewer(file, root, context) {
+  if(context.ext==='doc'){file=await extractDocText(file,context.signal);context.onInfo?.('DOC: основной текст без оформления, объектов и обработки исправлений.');context={...context,ext:'txt'};}
+  if(context.ext==='csv' && file.size>LARGE_TEXT_BYTES)return openLargeCsv(file,root,context);
+  if([...TEXT_EXTENSIONS,'md','tex','ipynb'].includes(context.ext) && file.size>LARGE_TEXT_BYTES)return openLargeText(file,root,context);
   let zoom = 1, gestures;
-  const renderer = context.ext === 'ipynb' ? openNotebook : TEXT_EXTENSIONS.includes(context.ext) ? openText : ['md','tex'].includes(context.ext) ? openMarkup : ['xlsx','csv'].includes(context.ext) ? openTable : context.ext === 'pdf' ? openPdf : ['docx','pptx'].includes(context.ext) ? openOffice : context.ext === 'wav' ? openAudio : openImage;
+  const renderer = context.ext === 'ipynb' ? openNotebook : TEXT_EXTENSIONS.includes(context.ext) ? openText : ['md','tex'].includes(context.ext) ? openMarkup : ['xlsx','csv'].includes(context.ext) ? openTable : context.ext === 'pdf' ? openPdf : ['docx','pptx'].includes(context.ext) ? openOffice : ['wav','ogg'].includes(context.ext) ? openAudio : openImage;
   const api = await renderer(file, root, {...context, onZoomGesture: data => gestures?.zoomBy(data.delta,data.anchor)});
   if (!api.setZoom) return api;
   const resize = api.setZoom;

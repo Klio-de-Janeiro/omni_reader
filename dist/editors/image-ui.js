@@ -32,7 +32,8 @@ export function openImageUI(model, record, root, { signal, onSave, onClose, onEr
   }
   function slider(title,min,max,value){const input=node('input');input.type='range';input.min=min;input.max=max;input.value=value;const output=node('output',value);const field=label(title,input);field.append(output);input.addEventListener('input',()=>{output.value=input.value;});return {input,field,output};}
   main.append(undo,redo);
-  const size=slider('Размер, px',1,400,24),opacity=slider('Непрозрачность, %',0,100,100);main.append(size.field,opacity.field);
+  const size=slider('Размер, px',1,400,24),opacity=slider('Непрозрачность, %',0,100,100);
+  const bottom=node('div',null,'paint-bottom-tools');bottom.setAttribute('aria-label','Размер кисти и непрозрачность');bottom.append(size.field,opacity.field);
   const options=node('details',null,'paint-options');
   const summary=node('summary','Цвет'),colorChip=node('span',null,'paint-color-chip');summary.append(colorChip);options.append(summary);
   const settings=node('div',null,'paint-settings'),picker=node('div',null,'paint-picker'),palette=node('canvas',null,'paint-palette');palette.width=220;palette.height=128;
@@ -49,7 +50,7 @@ export function openImageUI(model, record, root, { signal, onSave, onClose, onEr
   const crop=button('Обрезать / повернуть');crop.className='paint-transform-toggle';crop.setAttribute('aria-pressed','false');
   const colorRow=node('div',null,'paint-color-row');colorRow.append(swatches,options,crop);tools.append(main,colorRow);
   const viewport=node('div',null,'paint-viewport'),surface=node('div',null,'paint-image-surface'),canvas=node('canvas',null,'paint-canvas');
-  canvas.tabIndex=0;canvas.setAttribute('aria-label','Изображение: рисование кистью, ластиком или выделением');surface.append(canvas);viewport.append(surface);panel.append(bar,tools,viewport);root.replaceChildren(panel);
+  canvas.tabIndex=0;canvas.setAttribute('aria-label','Изображение: рисование кистью, ластиком или выделением');surface.append(canvas);viewport.append(surface);panel.append(bar,tools,viewport,bottom);root.replaceChildren(panel);
   const visual=createVisualZoom(viewport,surface,{signal,center:true,fixedWidth:false});visual.refresh();
   transforms=createImageTransform(model,{viewport,surface,canvas,signal,getZoom:()=>zoom,isBusy:()=>busy,onError,onChange:()=>{schedule();update();}});
   tools.append(transforms.controls);
@@ -57,8 +58,8 @@ export function openImageUI(model, record, root, { signal, onSave, onClose, onEr
   const flush=()=>{if(transforms.active)transforms.flush();};
   const run=action=>async()=>{if(busy || disposed)return;try{await action();}catch(error){onError(error);}};
   function update(){if(disposed)return;undo.disabled=busy || !(model.history.done.length || pending());redo.disabled=busy || !model.history.future.length || pending();save.disabled=busy || !(model.history.dirty || pending());close.disabled=busy;
-    main.hidden=colorRow.hidden=transforms.active;tools.classList.toggle('transform-active',transforms.active);crop.setAttribute('aria-pressed',String(transforms.active));canvas.style.touchAction=transforms.active?'pan-x pan-y':'none';transforms.refresh();
-    tools.inert=busy;status.textContent=busy?'Подготавливаем…':model.history.dirty || pending()?'Есть несохранённые изменения':'Изменений нет';onDirty?.(model.history.dirty || pending());}
+    main.hidden=colorRow.hidden=transforms.active;bottom.hidden=transforms.active || tools.hidden;tools.classList.toggle('transform-active',transforms.active);crop.setAttribute('aria-pressed',String(transforms.active));canvas.style.touchAction=transforms.active?'pan-x pan-y':'none';transforms.refresh();
+    tools.inert=bottom.inert=busy;status.textContent=busy?'Подготавливаем…':model.history.dirty || pending()?'Есть несохранённые изменения':'Изменений нет';onDirty?.(model.history.dirty || pending());}
   function updateColor(){
     const value=hsvToHex(color.hue,color.saturation,color.brightness);hex.value=value;colorChip.style.background=value;
     for(const [control,name]of [[hue,'hue'],[saturation,'saturation'],[brightness,'brightness']]){control.input.value=Math.round(color[name]);control.output.value=control.input.value;}
@@ -82,7 +83,7 @@ export function openImageUI(model, record, root, { signal, onSave, onClose, onEr
     panel.style.setProperty('--paint-bar-height',`${bar.offsetHeight || 56}px`);
     const bounds=viewport.getBoundingClientRect();
     const availableWidth=Math.max(1,bounds.width || viewport.clientWidth || root.clientWidth || innerWidth),availableHeight=Math.max(1,bounds.height || viewport.clientHeight || root.clientHeight || innerHeight);
-    const insetX=transforms.active?64:0,insetTop=transforms.active?(bar.offsetHeight || 56)+(tools.offsetHeight || 110)+24:0,insetBottom=transforms.active?64:0;
+    const insetX=transforms.active?40:0,insetTop=transforms.active?56:0,insetBottom=transforms.active?40:0;
     const fit=Math.min(Math.max(1,availableWidth-insetX*2)/dims.width,Math.max(1,availableHeight-insetTop-insetBottom)/dims.height);
     const maxSide=Math.min(2400,Math.max(dims.width,dims.height)*fit*zoom*(devicePixelRatio || 1));
     model.draw(canvas,maxSide,draft,preview);canvas.style.width=dims.width*fit+'px';canvas.style.height=dims.height*fit+'px';
@@ -139,7 +140,8 @@ export function openImageUI(model, record, root, { signal, onSave, onClose, onEr
   api={get position(){return {zoom};},get dirty(){return model.history.dirty || pending() || !!draft;},get busy(){return busy;},
     async export(){if(draft)throw new Error('Завершите штрих перед сохранением.');flush();return model.export();},
     setBusy(value){busy=!!value;if(busy){cancelStroke();transforms.cancelDrag();}update();},adjustZoom:delta=>setZoom(delta===null?1:zoom+delta),
-    toggleTools(){tools.hidden=!tools.hidden;schedule();},
+    toggleTools(){tools.hidden=!tools.hidden;bottom.hidden=tools.hidden || transforms.active;schedule();},
+    setFocus(){options.open=false;pointers.clear();cancelStroke();transforms.cancelDrag();schedule();},
     dispose(){if(disposed)return;disposed=true;cancelAnimationFrame(frame);gestures.dispose();transforms.dispose();observer.disconnect();window.removeEventListener('omni-layout-change',schedule);window.removeEventListener('pointerup',end);window.removeEventListener('pointercancel',cancelPointer);canvas.width=canvas.height=palette.width=palette.height=0;model.dispose();}
   };
   signal.addEventListener('abort',()=>api.dispose(),{once:true});if(signal.aborted){api.dispose();throw new DOMException('Aborted','AbortError');}

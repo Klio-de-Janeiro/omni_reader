@@ -251,6 +251,13 @@ test('Painting UI accepts pointer drawing, color controls, pinch and cancellatio
     await new Promise(resolve=>w.requestAnimationFrame(resolve));assert.equal(model.markCount,1);assert.deepEqual(pixel(actual(canvas),20,15),[255,128,128,255]);
     assert.equal(root.querySelector('.paint-options').open,false);
     assert.equal(root.querySelectorAll('.paint-color-row .paint-swatch').length,16);
+    const bottom=root.querySelector('.paint-bottom-tools');
+    assert.equal(bottom.previousElementSibling,root.querySelector('.paint-viewport'));
+    assert.equal(bottom.querySelector('[aria-label="Размер, px"]'),root.querySelector('[aria-label="Размер, px"]'));
+    const marks=model.markCount,exportBefore=Buffer.from(await api.export());
+    api.setFocus(false);api.setFocus(true);await new Promise(resolve=>w.requestAnimationFrame(resolve));
+    assert.equal(model.markCount,marks);assert.deepEqual(Buffer.from(await api.export()),exportBefore);
+    assert.equal(root.querySelector('.paint-canvas'),canvas);
     const fitted={width:canvas.style.width,height:canvas.style.height};
     assert.deepEqual(fitted,{width:'800px',height:'600px'});
     api.toggleTools();assert.equal(root.querySelector('.paint-tools').hidden,true);
@@ -273,4 +280,20 @@ test('Painting UI accepts pointer drawing, color controls, pinch and cancellatio
     assert.equal(root.querySelector('[aria-label="Насыщенность, %"]').value,'50');assert.equal(root.querySelector('[aria-label="Яркость, %"]').value,'50');
     controller.abort();fire(canvas,'pointerdown',100,100);assert.equal(model.markCount,0);
   }finally{api?.dispose();w.close();for(const [key,value]of old)if(value)Object.defineProperty(globalThis,key,value);else delete globalThis[key];}
+});
+
+test('Android Back dismisses dialogs and exits fullscreen before attempting to close the edited file',async()=>{
+  const java=await readFile(new URL('../android/app/src/main/java/dev/klio/omni/MainActivity.java',import.meta.url),'utf8');
+  const quoted=java.match(/onBackPressed\(\).*?evaluateJavascript\(("(?:[^"\\]|\\.)*")/)[1],script=JSON.parse(quoted);
+  const w=new JSDOM('<body class="focus-mode"><dialog open></dialog><div id="reader"></div><button id="focus-exit"></button><button id="close"></button>',{runScripts:'outside-only'}).window;
+  let closed=0;
+  w.document.querySelector('dialog').close=function(){this.removeAttribute('open');};
+  w.document.querySelector('#focus-exit').onclick=()=>w.document.body.classList.remove('focus-mode');
+  w.document.querySelector('#close').onclick=()=>closed++;
+  try{
+    assert.equal(w.eval(script),'stay');assert.equal(w.document.body.classList.contains('focus-mode'),true);assert.equal(closed,0);
+    assert.equal(w.eval(script),'stay');assert.equal(w.document.body.classList.contains('focus-mode'),false);assert.equal(closed,0);
+    assert.equal(w.eval(script),'stay');assert.equal(closed,1);
+    w.document.querySelector('#reader').hidden=true;assert.equal(w.eval(script),'exit');
+  }finally{w.close();}
 });

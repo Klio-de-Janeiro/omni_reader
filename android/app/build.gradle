@@ -1,4 +1,22 @@
 plugins { id 'com.android.application' }
+
+// Signing secrets stay in a local, ignored file, never in the project source.
+def signingProperties = new Properties()
+def signingFile = rootProject.file('keystore.properties')
+if (signingFile.isFile()) signingFile.withInputStream { signingProperties.load(it) }
+def signingValue = { name, envName -> signingProperties.getProperty(name) ?: System.getenv(envName) }
+def releaseStore = signingValue('storeFile', 'OMNI_KEYSTORE_FILE')
+def releaseStorePassword = signingValue('storePassword', 'OMNI_KEYSTORE_PASSWORD')
+def releaseKeyAlias = signingValue('keyAlias', 'OMNI_KEY_ALIAS')
+def releaseKeyPassword = signingValue('keyPassword', 'OMNI_KEY_PASSWORD')
+def signingReady = releaseStore && releaseStorePassword && releaseKeyAlias && releaseKeyPassword
+
+gradle.taskGraph.whenReady { graph ->
+    def releasing = graph.allTasks.any { it.project == project && it.name.toLowerCase().contains('release') }
+    if (releasing && !signingReady) throw new GradleException('Release signing is not configured. Restore the signing backup or run SETUP_ANDROID_SIGNING.cmd first.')
+    if (releasing && !rootProject.file(releaseStore).isFile()) throw new GradleException('Release keystore file does not exist. Restore your original signing key.')
+}
+
 android {
     namespace 'dev.klio.omni'
     compileSdk 35
@@ -6,12 +24,28 @@ android {
         applicationId 'dev.klio.omni'
         minSdk 26
         targetSdk 35
-        versionCode 3
+        versionCode 4
         versionName '0.3.0'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
-    buildTypes { release { minifyEnabled false } }
+    signingConfigs {
+        release {
+            if (signingReady) {
+                storeFile rootProject.file(releaseStore)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+    buildTypes {
+        release {
+            debuggable false
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
 }

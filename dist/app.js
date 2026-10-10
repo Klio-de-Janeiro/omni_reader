@@ -1,3 +1,4 @@
+import { initConversion } from './conversion.js';
 import { viewMode as normalizeMode } from './page-modes.js';
 import { copyText } from './clipboard.js';
 import { isNative, saveOriginal, connectNativeFiles, hasDocumentWindows, openDocumentWindow, setNativeDocument, setNativeFullscreen } from './native.js';
@@ -5,7 +6,7 @@ import { shortcutCommand, getShortcutBindings, shortcutLabel } from './shortcuts
 import { initShortcutSettings } from './shortcut-settings.js';
 import { createReadHighlights } from './read-highlights.js';
 import { initThemes } from './themes.js';
-import { validateFile, validateBytes, formatSize } from './validation.js';
+import { validateFile, validateBlob, formatSize } from './validation.js';
 import { listFiles, saveFile, removeFile } from './storage.js';
 import { openViewer } from './viewers.js';
 import { attachDocumentImages, refreshDocumentImages } from './document-images.js';
@@ -21,6 +22,7 @@ let viewMode='scroll',changingViewMode=false,focusMode=false,filesHidden=false,b
 let highlightRecords=[],highlightBackend,highlightGeneration=0;
 let highlightColor='#ffe066';try{highlightColor=localStorage.getItem('omni.marker.color')||highlightColor;}catch{}
 if(!/^#[0-9a-f]{6}$/i.test(highlightColor))highlightColor='#ffe066';$('highlight-color').value=highlightColor;
+const conversion=initConversion({getRecord:()=>files.get(active),getEditor:()=>editor,notify});
 const reading=()=>!!active && (!editing || editor?.sourceMode===false);
 const readMarks=createReadHighlights($('viewer'),{canHighlight:reading,onChange:records=>{highlightRecords=records;}});
 function syncHighlights(){
@@ -88,6 +90,10 @@ function setFocus(value,requestNative=true){
   }
 }
 document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement && focusMode)setFocus(false,false);});
+const autosaveKey='omni.autosave';
+try{$('remember').checked=localStorage.getItem(autosaveKey)==='true';}catch{$('remember').checked=false;}
+$('remember').onchange=()=>{try{localStorage.setItem(autosaveKey,String($('remember').checked));}catch{}};
+addEventListener('storage',event=>{if(event.key===autosaveKey)$('remember').checked=event.newValue==='true';});
 const ready = loadSaved();
 
 /** Report errors as text so filenames cannot inject markup. */
@@ -96,7 +102,7 @@ function notify(message, error = false) {
   node.textContent = message; $('messages').replaceChildren(node);
 }
 function clearMessage() { $('messages').replaceChildren(); }
-function label(ext) { return ({ docx: 'DOC', pptx: 'PPT', jpg: 'JPG', jpeg: 'JPG', png: 'PNG', xlsx: 'XLS', csv: 'CSV', pdf: 'PDF', wav: 'WAV', md: 'MD', tex: 'TEX', ipynb:'IPY', json:'JSON', yaml:'YML', yml:'YML', js:'JS', env:'ENV', txt:'TXT' })[ext]; }
+function label(ext) { return ({ doc: 'DOC', docx: 'DOC', pptx: 'PPT', jpg: 'JPG', jpeg: 'JPG', png: 'PNG', xlsx: 'XLS', csv: 'CSV', pdf: 'PDF', wav: 'WAV', ogg: 'OGG', md: 'MD', tex: 'TEX', ipynb:'IPY', json:'JSON', yaml:'YML', yml:'YML', js:'JS', env:'ENV', txt:'TXT' })[ext]; }
 
 /** Rebuild the file list from the same state used by viewer actions. */
 function renderList() {
@@ -145,9 +151,9 @@ async function importFiles(input, { local = false } = {}) {
   for (const file of Array.from(input).slice(0, 20)) {
     try {
       const ext = validateFile(file);
-      const bytes = await file.arrayBuffer(); validateBytes(bytes, ext);
+      await validateBlob(file, ext);
       if (files.size >= 30) throw new Error('Открыто 30 файлов. Уберите ненужный из списка.');
-      const record = { id: Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join(""), name: file.name, size: file.size, ext, blob: file, saved: false, opened: Date.now(), images: file.omniImages || {}, imageSource: file.omniImageSource };
+      const record = { id: Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join(""), name: file.name, size: file.size, ext, blob: file, nativeUrl: file.omniNativeUrl, saved: false, opened: Date.now(), images: file.omniImages || {}, imageSource: file.omniImageSource };
       if ($('remember').checked) {
         try { await saveFile(record); record.saved = true; }
         catch (error) { errors.push(`${file.name}: не сохранён. ${error.name === 'QuotaExceededError' ? 'Недостаточно места в хранилище приложения.' : error.message}`); }
@@ -189,13 +195,13 @@ async function selectFile(id, leaveChecked = false, initialMode='scroll', positi
   $('reader-name').textContent = record.name;
   $('reader-meta').textContent = `${record.ext.toUpperCase()} · ${formatSize(record.size)} · ${record.saved ? 'Копия на устройстве' : 'Только в этом сеансе'}`;
   $('reader-type').textContent = label(record.ext); $('reader-type').className = `format-icon ${record.ext}`;
-  $('edit-file').hidden=record.ext==='tex';
+  $('edit-file').hidden=['tex','doc','ogg'].includes(record.ext);
   const office = record.ext === 'docx' || record.ext === 'pptx';
   $('view-mode-control').hidden=!['pdf','docx','pptx'].includes(record.ext);
   $('office-note').hidden = !office; $('pagination').hidden = true;
-  $('zoom-controls').hidden = record.ext === 'wav';
-  $('text-tools').hidden = !['pdf', 'docx', 'pptx', 'xlsx', 'csv', 'md', 'tex', ...sourceFormats].includes(record.ext);
-  $('search-box').hidden = !['pdf', 'docx', 'pptx', 'md', 'tex', ...sourceFormats].includes(record.ext);
+  $('zoom-controls').hidden = ['wav','ogg'].includes(record.ext);
+  $('text-tools').hidden = !['pdf', 'doc', 'docx', 'pptx', 'xlsx', 'csv', 'md', 'tex', ...sourceFormats].includes(record.ext);
+  $('search-box').hidden = !['pdf', 'doc', 'docx', 'pptx', 'md', 'tex', ...sourceFormats].includes(record.ext);
   $('text-search').value = ''; $('rotate').hidden = !['jpg', 'jpeg', 'png'].includes(record.ext);
   downloadUrl = URL.createObjectURL(record.blob); $('download').href = downloadUrl; $('download').download = record.name;
   $('viewer').innerHTML = '<div class="loading"><span class="spinner"></span><span>Открываем файл…</span></div>';
@@ -225,7 +231,8 @@ async function selectFile(id, leaveChecked = false, initialMode='scroll', positi
   }
 }
 function syncFocusControls() {
-  const ext=files.get(active)?.ext,image=['png','jpg','jpeg'].includes(ext),editable=!!ext && ext!=='tex';
+  conversion.sync();
+  const ext=files.get(active)?.ext,image=['png','jpg','jpeg'].includes(ext),editable=!!ext && !['tex','doc','ogg'].includes(ext);
   const canMark=reading() && ['pdf','docx','pptx','xlsx','csv','md','tex',...sourceFormats].includes(ext);
   $('focus-actions').hidden=!focusMode;
   const markdownImages = ['md','tex','ipynb'].includes(ext);
@@ -287,7 +294,7 @@ window.addEventListener('omni-images-changed', event => {
   const record = event.detail;
   if (files.get(record?.id) !== record) return;
   if (record.id === active) refreshDocumentImages($('viewer'), record);
-  if (record.saved) imageSaving = imageSaving.catch(() => {}).then(() => saveFile(record)).catch(error => notify(`Изображения не сохранены: ${error.message}`, true));
+  if (record.saved && $('remember').checked) imageSaving = imageSaving.catch(() => {}).then(() => saveFile(record)).catch(error => notify(`Изображения не сохранены: ${error.message}`, true));
 });
 $('dropzone').onclick = () => $('file-input').click();
 $('dropzone').onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); $('file-input').click(); } };
@@ -378,7 +385,7 @@ $('download').onclick = async event => {
   try { await saveOriginal(record); } catch (error) { notify(error.message, true); }
 };
 connectNativeFiles(importFiles, error => notify(error.message, true));
-if (isNative) { $('install').hidden = true; $('remember').checked = true; }
+if (isNative) $('install').hidden = true;
 
 /** Ask only when a navigation would discard a user's unsaved editing session. */
 async function canLeaveEditor() {
@@ -401,10 +408,10 @@ async function saveEditedCopy(session) {
     const base = (source.name.toLowerCase() === '.env' ? '.env' : source.name.replace(/\.[^.]+$/, '')).replace(/-edited-\d+$/, '');
     let number = 1, name;
     do { name = `${base}-edited-${number++}.${source.ext}`; } while ([...files.values()].some(file => file.name === name));
-    const blob = new File([bytes], name); const ext = validateFile(blob); validateBytes(await blob.arrayBuffer(), ext);
+    const blob = new File([bytes], name); const ext = validateFile(blob); await validateBlob(blob, ext);
     if (files.size >= 30) throw new Error('Открыто 30 файлов. Освободите место в списке перед сохранением копии.');
     const record = { id: crypto.randomUUID(), name, size: blob.size, ext, blob, saved: false, opened: Date.now(), images: { ...source.images }, imageSource: source.imageSource };
-    if ($('remember').checked) { await saveFile(record); record.saved = true; }
+    if ($('remember').checked) { try { await saveFile(record); record.saved = true; } catch (error) { notify('Автосохранение недоступно: ' + error.message, true); } }
     files.set(record.id, record); session.setBusy(false); editor.dispose(); editor = null;
     await selectFile(record.id, true, viewMode, session.position);
     notify(`Копия ${name} добавлена в приложение${record.saved ? ' и сохранена на устройстве' : ' на время сеанса'}.`);
@@ -415,7 +422,7 @@ async function saveEditedCopy(session) {
 $('focus-edit').onclick=()=>{if(editing && editor?.sourceMode && editor?.toggleTools)editor.toggleTools();else return toggleEditing();};
 $('focus-save').onclick=()=>void saveEditedCopy(editor);
 $('edit-file').onclick = async () => {
-  if (editing || preparingEditor || changingViewMode || !active || files.get(active)?.ext==='tex') return;
+  if (editing || preparingEditor || changingViewMode || !active || ['tex','doc','ogg'].includes(files.get(active)?.ext)) return;
   const record = files.get(active), initialPage=page, initialZoom=zoom; resetViewer(); editing = true; preparingEditor = true;
   const current = controller;
   $('pagination').hidden = true; $('zoom-controls').hidden = true; $('text-tools').hidden = true; $('office-note').hidden = true; $('rotate').hidden = true; $('edit-file').hidden = true;

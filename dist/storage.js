@@ -22,12 +22,12 @@ async function transact(mode, action) {
 }
 export const listFiles = () => transact('readonly', store => store.getAll());
 export const removeFile = id => transact('readwrite', store => store.delete(id));
-/** Bound persistent copies to 20 files and 256 MiB per browser. */
+/** Bound persistent copies to 20 files and 2 GiB per browser. */
 export async function saveFile(record) {
   const files = await listFiles();
   const other = files.filter(file => file.id !== record.id);
   const storedSize = file => file.size + Object.values(file.images || {}).reduce((sum, data) => sum + String(data).length * 2, 0);
-  if (other.length >= 20 || other.reduce((sum, file) => sum + storedSize(file), 0) + storedSize(record) > 256 * 1024 * 1024) throw new Error('Лимит сохранения: 20 файлов или 256 МиБ. Удалите ненужную копию из списка.');
+  if (other.length >= 20 || other.reduce((sum, file) => sum + storedSize(file), 0) + storedSize(record) > 2 * 1024 * 1024 * 1024) throw new Error('Лимит сохранения: 20 файлов или 2 ГиБ. Удалите ненужную копию из списка.');
   // Native source tokens belong to this application session, unlike embedded images.
   await transact('readwrite', store => store.put({ ...record, imageSource: undefined }));
 }

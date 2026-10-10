@@ -1,3 +1,4 @@
+import { LARGE_TEXT_BYTES, openLargeText, openLargeCsv } from '../large-files.js';
 import { openPdfUI } from './pdf-ui.js';
 import { bindZoomGestures, createVisualZoom } from '../gestures.js';
 import { openOfficeUI } from './office-ui.js';
@@ -22,12 +23,17 @@ const input = (title, type = 'text') => { const el = node('input'); el.type = ty
 
 /** Mount one editor and expose an explicit export, dirty state and disposal contract. */
 async function openEditorUI(record, root, { onSave, onClose, onError, onDirty, signal, viewMode, onViewMode, onShellShortcut, initialPage = 1, initialZoom = 1 }) {
+  const largeContext={onSave,onClose,onError,onDirty,signal};
+  if(record.blob.size>LARGE_TEXT_BYTES){
+    if(record.ext==='csv')return openLargeCsv(record.blob,root,largeContext,true);
+    if([...TEXT_EXTENSIONS,'md','ipynb'].includes(record.ext))return openLargeText(record.blob,root,largeContext,true);
+  }
   if (record.ext === 'md') return openMarkupEditor(record, root, { onSave, onClose, onError, onDirty, signal, initialZoom });
   if (record.ext === 'ipynb') return openNotebookEditor(record, root, { onSave, onClose, onError, onDirty, signal, initialZoom });
   if (TEXT_EXTENSIONS.includes(record.ext)) return openTextEditor(record, root, { onSave, onClose, onError, onDirty, signal, initialZoom });
   const bytes = await record.blob.arrayBuffer(), ext = record.ext;
   let model;
-  if (ext === 'csv') model = new CsvEditor(bytes);
+  if (ext === 'csv') {try{model=new CsvEditor(bytes);}catch(error){if(/Лимит/.test(error.message))return openLargeCsv(record.blob,root,largeContext,true);throw error;}}
   else if (ext === 'wav') model = new WavEditor(bytes);
   else if (ext === 'pdf') model = await openPdfEditor(bytes);
   else if (['jpg', 'jpeg', 'png'].includes(ext)) model = await openImageEditor(new File([bytes], record.name));

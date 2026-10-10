@@ -1,3 +1,4 @@
+param([ValidateSet('Release', 'Debug')][string]$Configuration = 'Release')
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw 'Install Node.js 22+ first.' }
@@ -9,6 +10,11 @@ if (-not $env:ANDROID_HOME) { $env:ANDROID_HOME = Join-Path $env:LOCALAPPDATA 'A
 $androidPlatform = Join-Path $env:ANDROID_HOME 'platforms\android-35\android.jar'
 if (-not (Test-Path $androidPlatform)) { throw 'In Android Studio > SDK Manager install Android SDK Platform 35 and Build-Tools 35.0.0, then rerun.' }
 if (-not (Test-Path (Join-Path $env:ANDROID_HOME 'build-tools\35.0.0\aapt2.exe'))) { throw 'Install Android SDK Build-Tools 35.0.0 in SDK Manager.' }
+if ($Configuration -eq 'Release' -and -not (Test-Path (Join-Path $PSScriptRoot 'android\keystore.properties'))) {
+    if (-not ($env:OMNI_KEYSTORE_FILE -and $env:OMNI_KEYSTORE_PASSWORD -and $env:OMNI_KEY_ALIAS -and $env:OMNI_KEY_PASSWORD)) {
+        throw 'Release signing is not configured. Restore the signing backup or run SETUP_ANDROID_SIGNING.cmd first. Do not create a new key if you already published this app.'
+    }
+}
 node scripts/sync-native.mjs
 if ($LASTEXITCODE -ne 0) { throw 'Native asset synchronization failed.' }
 $gradleRoot = Join-Path $PSScriptRoot '.tools\gradle-8.11.1'
@@ -38,8 +44,22 @@ if (-not (Test-Path $gradleBin)) {
 }
 & $gradleBin -p android wrapper --gradle-version 8.11.1 --distribution-type bin
 if ($LASTEXITCODE -ne 0) { throw 'Gradle setup failed. See the log above.' }
-& $gradleBin -p android assembleDebug --stacktrace
+& $gradleBin -p android ('assemble' + $Configuration) --stacktrace
 if ($LASTEXITCODE -ne 0) { throw 'APK build failed. See the log above.' }
 New-Item -ItemType Directory -Force 'release' | Out-Null
-Copy-Item 'android\app\build\outputs\apk\debug\app-debug.apk' 'release\Omni-Reader-0.3.0-Android.apk' -Force
-Write-Host 'APK ready: release\Omni-Reader-0.3.0-Android.apk'
+if ($Configuration -eq 'Release') {
+    $apk = Join-Path $PSScriptRoot 'android\app\build\outputs\apk\release\app-release.apk'
+    $signer = Join-Path $env:ANDROID_HOME 'build-tools\35.0.0\apksigner.bat'
+    $aapt = Join-Path $env:ANDROID_HOME 'build-tools\35.0.0\aapt.exe'
+    if (-not (Test-Path $apk)) { throw 'Signed release APK was not produced.' }
+    & $signer verify --verbose $apk
+    if ($LASTEXITCODE -ne 0) { throw 'Release APK signature verification failed.' }
+    $manifest = & $aapt dump badging $apk
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect the release APK.' }
+    if (($manifest -join "`n") -match 'application-debuggable') { throw 'The APK is debuggable. Upload stopped.' }
+    Copy-Item $apk 'release\omni.apk' -Force
+    Write-Host 'Signed release APK ready: release\omni.apk'
+} else {
+    Copy-Item 'android\app\build\outputs\apk\debug\app-debug.apk' 'release\Omni-Reader-0.3.0-Android-debug.apk' -Force
+    Write-Host 'Debug APK ready (not for store upload): release\Omni-Reader-0.3.0-Android-debug.apk'
+}
