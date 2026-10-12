@@ -1,0 +1,24 @@
+{
+  "paths": {
+    "python": "C:\\Users\\User\\Desktop\\whisper_env\\Scripts\\python.exe",
+    "model": "C:\\Users\\User\\.cache\\huggingface\\hub\\models--Systran--faster-whisper-small\\snapshots\\536b0662742c02347bc0e980a01041f333bce120",
+    "ffmpeg": ""
+  },
+  "fields": [
+    { "key": "language", "label": "Язык записи", "type": "select", "default": "ru", "choices": ["auto", "en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl", "ca", "nl", "ar", "sv", "it", "id", "hi", "fi", "vi", "he", "uk", "el", "ms", "cs", "ro", "da", "hu", "ta", "no", "th", "ur", "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk", "te", "fa", "lv", "bn", "sr", "az", "sl", "kn", "et", "mk", "br", "eu", "is", "hy", "ne", "mn", "bs", "kk", "sq", "sw", "gl", "mr", "pa", "si", "km", "sn", "yo", "so", "af", "oc", "ka", "be", "tg", "sd", "gu", "am", "yi", "lo", "uz", "fo", "ht", "ps", "tk", "nn", "mt", "sa", "lb", "my", "bo", "tl", "mg", "as", "tt", "haw", "ln", "ha", "ba", "jw", "su", "yue"], "help": "Выберите язык речи или автоматическое определение." },
+    { "key": "task", "label": "Режим", "type": "select", "default": "transcribe", "choices": [["transcribe", "Распознавание"], ["translate", "Перевод в английский"]], "help": "Распознавание сохраняет исходный язык. Перевод выводит английский текст." },
+    { "key": "temperature", "label": "Температура", "type": "number", "default": 0, "min": 0, "max": 1, "step": 0.1, "help": "0 — поиск через beam_size; больше 0 — выбор вариантов с sampling." },
+    { "key": "beam_size", "label": "Beam size", "type": "number", "default": 5, "min": 1, "max": 20, "step": 1, "integer": true, "help": "Число вариантов поиска при температуре 0. Большие значения замедляют обработку." },
+    { "key": "best_of", "label": "Best of", "type": "number", "default": 5, "min": 1, "max": 20, "step": 1, "integer": true, "advanced": true, "help": "Число вариантов при температуре больше 0, включая повторные попытки." },
+    { "key": "temperature_fallback", "label": "Повторять с повышением температуры", "type": "checkbox", "default": true, "advanced": true, "help": "Если результат не проходит пороги, температура повышается на 0,2 до 1." },
+    { "key": "condition_on_previous_text", "label": "Учитывать предыдущий текст", "type": "checkbox", "default": true, "advanced": true, "help": "Помогает сохранять контекст. Можно выключить при повторении фраз." },
+    { "key": "patience", "label": "Patience", "type": "number", "default": 1, "min": 1, "max": 3, "step": 0.1, "advanced": true, "help": "Продолжительность поиска вариантов beam search. Работает при температуре 0." },
+    { "key": "length_penalty", "label": "Length penalty", "type": "number", "default": 1, "min": 0, "max": 1, "step": 0.1, "advanced": true, "help": "Регулирует учёт длины при выборе результата." },
+    { "key": "no_speech_threshold", "label": "Порог отсутствия речи", "type": "number", "default": 0.6, "min": 0, "max": 1, "step": 0.05, "advanced": true, "help": "Пропуск тишины при низкой уверенности текста. Меньший порог пропускает больше фрагментов." },
+    { "key": "log_prob_threshold", "label": "Порог уверенности текста", "type": "number", "default": -1, "min": -10, "max": 0, "step": 0.1, "advanced": true, "help": "Средняя log probability ниже порога вызывает повторную попытку, если она включена." },
+    { "key": "compression_ratio_threshold", "label": "Порог повторяемости", "type": "number", "default": 2.4, "min": 1, "max": 10, "step": 0.1, "advanced": true, "help": "Отношение сжатия выше порога вызывает повторную попытку, если она включена." },
+    { "key": "cpu_threads", "label": "Потоки CPU", "type": "number", "default": 0, "min": 0, "max": 32, "step": 1, "integer": true, "advanced": true, "help": "0 — автоматически, до 8 потоков. Можно задать от 1 до 32." },
+    { "key": "compute_type", "label": "Вычисления faster-whisper", "type": "select", "default": "int8", "choices": [["int8", "INT8"], ["float32", "Float32"]], "advanced": true, "help": "INT8 экономит память. Настройка применяется к папке faster-whisper; модели .pt работают в Float32." },
+    { "key": "initial_prompt", "label": "Подсказка: имена и термины", "type": "textarea", "default": "", "maxLength": 2000, "advanced": true, "help": "Например: Omni Reader, машинное обучение, CTranslate2. Это контекст для модели, не команда." }
+  ]
+}

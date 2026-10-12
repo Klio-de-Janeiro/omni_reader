@@ -3,45 +3,98 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { StringDecoder } = require('node:string_decoder');
 const { randomUUID } = require('node:crypto');
+const { EventEmitter } = require('node:events');
+const { SpeechSession } = require('./speech-session.cjs');
+const defaults = require('./speech-defaults.json');
 
 const MAX_TEXT = 16 * 1024 * 1024;
 const audioName = name => ['.wav', '.ogg'].includes(path.extname(name).toLowerCase());
 
+/** Validate renderer-supplied parameters against the same schema shown in settings. */
+function parameters(input = {}, partial = false) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Неверные параметры Whisper.');
+  const fields = new Map(defaults.fields.map(field => [field.key, field]));
+  for (const key of Object.keys(input)) if (!fields.has(key)) throw new Error('Неизвестный параметр Whisper: ' + key);
+  return Object.fromEntries(defaults.fields.filter(field => !partial || Object.hasOwn(input, field.key)).map(field => {
+    const value = Object.hasOwn(input, field.key) ? input[field.key] : field.default;
+    const choices = field.choices?.map(choice => Array.isArray(choice) ? choice[0] : choice);
+    const valid = field.type === 'number' ? typeof value === 'number' && Number.isFinite(value) && value >= field.min && value <= field.max && (!field.integer || Number.isInteger(value))
+      : field.type === 'checkbox' ? typeof value === 'boolean'
+      : field.type === 'select' ? choices.includes(value)
+      : typeof value === 'string' && value.length <= field.maxLength;
+    if (!valid) throw new Error('Неверное значение: ' + field.label + '.');
+    return [field.key, value];
+  }));
+}
+
 /** Start only a selected Python and keep transcription jobs outside the renderer. */
-class SpeechService {
+class SpeechService extends EventEmitter {
   constructor(directory, worker, options = {}) {
+    super();
     this.directory = directory; this.worker = worker;
     this.spawn = options.spawn || spawn; this.job = null;
+    this.session = new SpeechSession(worker, this.spawn);
+    this.backgroundOwner = null;
+  }
+  get backgroundBusy() { return this.backgroundOwner !== null; }
+  reserveBackground(owner) {
+    if (this.job || this.updating || this.backgroundBusy) return false;
+    this.backgroundOwner = owner; return true;
+  }
+  releaseBackground(owner) {
+    if (this.backgroundOwner !== owner) return;
+    this.backgroundOwner = null; this.emit('idle');
   }
   async settings() {
+    let value = {};
     try {
-      const value = JSON.parse(await fs.readFile(path.join(this.directory, 'speech-settings.json'), 'utf8'));
-      return { python: value.python || '', model: value.model || '', ffmpeg: value.ffmpeg || '' };
-    } catch (error) { if (error.code === 'ENOENT') return { python: '', model: '', ffmpeg: '' }; throw error; }
+      value = JSON.parse(await fs.readFile(path.join(this.directory, 'speech-settings.json'), 'utf8'));
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const paths = Object.fromEntries(Object.entries(defaults.paths).map(([key, fallback]) => [key, typeof value[key] === 'string' && value[key] ? value[key] : fallback]));
+    return { ...paths, params: parameters(value.params), schema: defaults.fields };
+  }
+  async update(change) {
+    if (this.backgroundBusy) throw new Error('Сначала завершите или отмените обработку Qwen.');
+    if (this.job) throw new Error('Сначала завершите или отмените распознавание.');
+    if (this.updating) throw new Error('Настройки сохраняются. Подождите.');
+    this.updating = true;
+    try {
+      const config = await change(await this.settings());
+      const saved = { python: config.python, model: config.model, ffmpeg: config.ffmpeg, params: parameters(config.params) };
+      await fs.mkdir(this.directory, { recursive: true });
+      const target = path.join(this.directory, 'speech-settings.json'), temp = target + '.' + randomUUID() + '.tmp';
+      try { await fs.writeFile(temp, JSON.stringify(saved, null, 2), { flag: 'wx' }); await fs.rename(temp, target); }
+      finally { await fs.rm(temp, { force: true }); }
+      return { ...saved, schema: defaults.fields };
+    } finally { this.updating = false; this.emit('idle'); }
+  }
+  saveParameters(input) {
+    const patch = parameters(input, true);
+    return this.update(config => ({ ...config, params: parameters({ ...config.params, ...patch }) }));
+  }
+  reset() {
+    return this.update(() => ({ ...defaults.paths, params: parameters() }));
   }
   async configure(kind, selected) {
-    if (this.job) throw new Error('Сначала завершите или отмените распознавание.');
-    const config = await this.settings(), resolved = await fs.realpath(selected), stat = await fs.stat(resolved);
-    if (kind === 'python') {
-      if (!stat.isFile() || !/^python(?:[\d.]*)?(?:\.exe)?$/i.test(path.basename(resolved))) throw new Error('Выберите python.exe вашего окружения.');
-      // Keep a virtual environment's launcher path; resolving its symlink can lose its packages.
-      config.python = path.resolve(selected);
-    } else if (kind === 'model-file') {
-      if (!stat.isFile() || path.extname(resolved).toLowerCase() !== '.pt') throw new Error('Выберите файл модели .pt.');
-      config.model = resolved;
-    } else if (kind === 'model-folder') {
-      if (!stat.isDirectory()) throw new Error('Выберите папку модели faster-whisper.');
-      for (const name of ['model.bin', 'config.json', 'tokenizer.json']) if (!(await fs.stat(path.join(resolved, name))).isFile()) throw new Error('В папке модели отсутствует ' + name);
-      config.model = resolved;
-    } else if (kind === 'ffmpeg') {
-      if (!stat.isFile() || !/^ffmpeg(?:\.exe)?$/i.test(path.basename(resolved))) throw new Error('Выберите ffmpeg.exe.');
-      config.ffmpeg = resolved;
-    } else throw new Error('Неверная настройка Whisper.');
-    await fs.mkdir(this.directory, { recursive: true });
-    const target = path.join(this.directory, 'speech-settings.json'), temp = target + '.' + randomUUID() + '.tmp';
-    try { await fs.writeFile(temp, JSON.stringify(config, null, 2), { flag: 'wx' }); await fs.rename(temp, target); }
-    finally { await fs.rm(temp, { force: true }); }
-    return config;
+    return this.update(async config => {
+      const resolved = await fs.realpath(selected), stat = await fs.stat(resolved);
+      if (kind === 'python') {
+        if (!stat.isFile() || !/^python(?:[\d.]*)?(?:\.exe)?$/i.test(path.basename(resolved))) throw new Error('Выберите python.exe вашего окружения.');
+        // Keep a virtual environment's launcher path; resolving its symlink can lose its packages.
+        config.python = path.resolve(selected);
+      } else if (kind === 'model-file') {
+        if (!stat.isFile() || path.extname(resolved).toLowerCase() !== '.pt') throw new Error('Выберите файл модели .pt.');
+        config.model = resolved;
+      } else if (kind === 'model-folder') {
+        if (!stat.isDirectory()) throw new Error('Выберите папку модели faster-whisper.');
+        for (const name of ['model.bin', 'config.json', 'tokenizer.json']) if (!(await fs.stat(path.join(resolved, name))).isFile()) throw new Error('В папке модели отсутствует ' + name);
+        config.model = resolved;
+      } else if (kind === 'ffmpeg') {
+        if (!stat.isFile() || !/^ffmpeg(?:\.exe)?$/i.test(path.basename(resolved))) throw new Error('Выберите ffmpeg.exe.');
+        config.ffmpeg = resolved;
+      } else throw new Error('Неверная настройка Whisper.');
+      return config;
+    });
   }
   cancel(owner, requestId) {
     const job = this.job;
@@ -54,24 +107,29 @@ class SpeechService {
     } else job.child?.kill();
     return true;
   }
-  async run(owner, id, audio, report = () => {}) {
+  async run(owner, id, audio, report = () => {}, options = {}) {
+    if (this.backgroundBusy) throw new Error('Qwen обрабатывает команду. Дождитесь завершения или отмените запрос.');
     if (this.job) throw new Error('Whisper уже распознаёт другую запись. Дождитесь завершения.');
+    if (this.updating) throw new Error('Дождитесь сохранения настроек Whisper.');
     if (typeof id !== 'string' || !/^[\w-]{1,80}$/.test(id)) throw new Error('Неверный запрос распознавания.');
     const job = { owner, id, cancelled: false }; this.job = job;
     try {
       const config = await this.settings();
+      if (options.background && config.params.cpu_threads === 0) config.params.cpu_threads = 4;
+      options.onConfig?.(config);
       if (!config.python || !config.model) throw new Error('Откройте «Настройки Whisper» и выберите Python и скачанную модель.');
       const source = await fs.realpath(audio), stat = await fs.stat(source);
       if (!stat.isFile() || !audioName(source) || stat.size >= 500000000) throw new Error('Выберите OGG или WAV размером меньше 500 МБ.');
       if (job.cancelled) throw new Error('Распознавание отменено.');
-      const text = await this.recognize(job, { ...config, audio: source }, report);
+      const { schema, ...request } = config;
+      const text = await (options.background ? this.session.run(job, { ...request, audio: source }, report) : this.recognize(job, { ...request, audio: source }, report));
       if (job.cancelled) throw new Error('Распознавание отменено.');
       if (!text.trim()) return { text: '', savedPath: null, message: 'Речь не обнаружена; текстовый файл не создан.' };
       let savedPath;
       try { savedPath = await this.saveTranscript(source, text, job); }
       catch (error) { if (job.cancelled) throw error; return { text, savedPath: null, message: 'Речь распознана, но сохранить рядом с записью не удалось: ' + error.message }; }
       return { text, savedPath, message: 'Сохранено: ' + savedPath };
-    } finally { if (this.job === job) this.job = null; }
+    } finally { if (this.job === job) this.job = null; this.emit('idle'); }
   }
   recognize(job, config, report) {
     return new Promise((resolve, reject) => {

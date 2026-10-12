@@ -14,6 +14,8 @@ test('Desktop routes each import and OS file to its own trusted window', async (
   class SpeechService {
     async settings() { return { python: 'python.exe', model: 'small.pt' }; }
     async configure(kind, selected) { speechChoices.push({ kind, selected }); return this.settings(); }
+    async saveParameters(params) { speechChoices.push({ params }); return this.settings(); }
+    async reset() { speechChoices.push({ reset:true }); return this.settings(); }
     async run(owner, id, audio, report) { speechCalls.push({ owner, id, audio }); report({ id, type: 'status', message: 'CPU' }); return { text: 'Речь', savedPath: audio + '.txt' }; }
     cancel(owner, id) { speechCancels.push({ owner, id }); return false; }
   }
@@ -33,7 +35,7 @@ test('Desktop routes each import and OS file to its own trusted window', async (
     destroy() { this.destroyed=true; this.emit('closed'); }
     static getFocusedWindow() { return created.at(-1); }
   }
-  const app = new EventEmitter(); Object.assign(app, { requestSingleInstanceLock: () => true, whenReady: async () => {}, quit() {}, isPackaged: false, getPath:()=>'/application/user-data', setAppUserModelId(value) { this.modelId = value; } });
+  const app = new EventEmitter(); Object.assign(app, { requestSingleInstanceLock: () => true, whenReady: async () => {}, quit() { this.didQuit = true; }, isPackaged: false, getPath:()=>'/application/user-data', setAppUserModelId(value) { this.modelId = value; } });
   const electron = { app, BrowserWindow, ipcMain: { handle(name, callback) { handlers.set(name, callback); } },
     protocol: { registerSchemesAsPrivileged() {}, handle() {} },
     dialog: { showMessageBoxSync() { throw new Error('Opening another file must not discard a draft'); }, showErrorBox() {}, async showSaveDialog(window) { savedIn.push(window); return saveResult; }, async showOpenDialog() { return openResult; } }
@@ -48,6 +50,9 @@ test('Desktop routes each import and OS file to its own trusted window', async (
   });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(app.modelId, 'dev.klio.omni');
+  assert.equal([...handlers.keys()].some(name => /omni-(recorder|voice)/.test(name)), false);
+  app.emit('window-all-closed');
+  assert.equal(app.didQuit, true);
   const event = window => ({ sender: window.webContents, senderFrame: window.webContents.mainFrame });
   const file = name => ({ name, bytes: new ArrayBuffer(4) });
   assert.equal(created.length, 1);
@@ -125,6 +130,10 @@ test('Desktop routes each import and OS file to its own trusted window', async (
   openResult = { canceled:false, filePaths:['/env/python.exe'] };
   await handlers.get('omni-speech-choose')(event(audioWindow),'python');
   assert.deepEqual(speechChoices.at(-1), { kind:'python', selected:'/env/python.exe' });
+  await handlers.get('omni-speech-save')(event(audioWindow), { language:'en', beam_size:7 });
+  assert.deepEqual(speechChoices.at(-1), { params:{ language:'en', beam_size:7 } });
+  await handlers.get('omni-speech-reset')(event(audioWindow)); assert.equal(speechChoices.at(-1).reset,true);
+  assert.throws(() => handlers.get('omni-speech-save')({ ...event(audioWindow), senderFrame:{ url:'omni://app/index.html' } }, { language:'en' }), /Invalid sender/);
   let chooseOriginal; openResult = new Promise(resolve => { chooseOriginal = resolve; });
   const pendingSpeech = handlers.get('omni-speech-run')(event(audioWindow), { id:'pending-choice', name:'copy.wav' });
   assert.equal(handlers.get('omni-speech-cancel')(event(audioWindow),'pending-choice'), true);

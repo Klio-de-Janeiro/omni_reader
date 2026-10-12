@@ -30,7 +30,7 @@ async function collect(dir) {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const path = `${dir}/${entry.name}`;
     if (entry.isDirectory()) result.push(...await collect(path));
-    else if (!['sw.js', '_headers'].includes(entry.name)) result.push(path);
+    else if (!entry.name.startsWith('recorder') && !['sw.js', '_headers'].includes(entry.name)) result.push(path);
   }
   return result.sort();
 }

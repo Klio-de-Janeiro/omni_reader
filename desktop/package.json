@@ -37,10 +37,21 @@
       "preload.cjs",
       "document-images.cjs",
       "speech.cjs",
+      "speech-defaults.json",
       "package.json",
-      "www/**/*"
+      "www/**/*",
+      "speech-session.cjs",
+      "!www/recorder*"
     ],
-    "extraResources": [{ "from": "speech", "to": "speech", "filter": ["transcribe.py"] }],
+    "extraResources": [
+      {
+        "from": "speech",
+        "to": "speech",
+        "filter": [
+          "transcribe.py"
+        ]
+      }
+    ],
     "win": {
       "target": "nsis",
       "icon": "../dist/icon.ico",

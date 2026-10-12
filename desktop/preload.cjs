@@ -6,6 +6,8 @@ if (process.isMainFrame) contextBridge.exposeInMainWorld('omniDesktop', {
   saveFinish: cancel => ipcRenderer.invoke('omni-save-finish', cancel),
   pdf: html => ipcRenderer.invoke('omni-pdf', html),
   speechSettings: () => ipcRenderer.invoke('omni-speech-settings'),
+  speechSave: params => ipcRenderer.invoke('omni-speech-save', params),
+  speechReset: () => ipcRenderer.invoke('omni-speech-reset'),
   speechChoose: kind => ipcRenderer.invoke('omni-speech-choose', kind),
   speechRun: input => ipcRenderer.invoke('omni-speech-run', input),
   speechCancel: id => ipcRenderer.invoke('omni-speech-cancel', id),

@@ -135,6 +135,8 @@ if (locked) app.whenReady().then(async () => {
     return openFile(file, state);
   });
   ipcMain.handle('omni-speech-settings', event => { senderState(event); return speech.settings(); });
+  ipcMain.handle('omni-speech-save', (event, params) => { senderState(event); return speech.saveParameters(params); });
+  ipcMain.handle('omni-speech-reset', event => { senderState(event); return speech.reset(); });
   ipcMain.handle('omni-speech-choose', async (event, kind) => {
     const state = senderState(event);
     if (!['python','model-file','model-folder','ffmpeg'].includes(kind)) throw new Error('Неверная настройка Whisper.');

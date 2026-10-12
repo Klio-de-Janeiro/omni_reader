@@ -1,4 +1,5 @@
 @echo off
+rem PowerShell launch: .\Build_windows (Windows resolves this CMD file).
 setlocal
 cd /d "%~dp0"
 if errorlevel 1 goto failed
@@ -15,6 +16,8 @@ if errorlevel 1 (
   exit /b 1
 )
 node -e "const [major, minor] = process.versions.node.split('.').map(Number); if (major < 22 || (major === 22 && minor < 12)) { console.error('Node.js 22.12+ is required. Current: ' + process.version); process.exit(1); }"
+if errorlevel 1 goto failed
+node -e "const fs = require('node:fs'); for (const file of ['desktop/main.cjs','desktop/preload.cjs','desktop/speech.cjs','desktop/speech-session.cjs','desktop/speech-defaults.json','desktop/speech/transcribe.py','dist/speech-ui.js','dist/speech-options-ui.js','dist/speech.css']) { if (!fs.existsSync(file)) { console.error('Missing source file: ' + file + '. Extract the complete patch into the project folder.'); process.exit(1); } }"
 if errorlevel 1 goto failed
 node scripts/sync-native.mjs
 if errorlevel 1 goto failed
