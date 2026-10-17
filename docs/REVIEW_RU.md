@@ -54,6 +54,8 @@ android/app/build/outputs/apk/debug/app-debug.apk
   для блокировки Service Worker в непрозрачных sandbox-iframe Office;
   проверка отсутствия браузерных ошибок сохранена.
 - В обязательный набор включены тесты инструментов Windows.
+- Первый запуск CI на Ubuntu выявил отсутствующий executable bit у `7zip-bin`;
+  тестовая подготовка восстанавливает права перед запуском упакованного инструмента.
 - Добавлены README со снимком интерфейса, CONTRIBUTING, шаблоны issue/PR,
   автоматические проверки на Ubuntu/Windows и установка desktop-зависимостей
   в существующем workflow сборки.

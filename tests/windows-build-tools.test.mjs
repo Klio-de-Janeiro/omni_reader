@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,8 @@ const silent = () => {};
 let workspace, archive, source;
 
 before(async () => {
+  // npm's 7zip-bin tarball can lose its executable bit on Linux installs.
+  if (process.platform !== 'win32') await chmod(sevenZip, 0o755);
   await mkdir(path.join(project, '.tools'), { recursive: true });
   workspace = await mkdtemp(path.join(project, '.tools', 'windows-tools-test-'));
   const input = path.join(workspace, 'input');
