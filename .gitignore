@@ -16,3 +16,20 @@ desktop/node_modules/
 
 .signing/
 android/keystore.properties
+
+# Local editor settings, Python caches and test workspaces
+.idea/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+tests/results.json
+/assistant-test-*/
+/voice test & */

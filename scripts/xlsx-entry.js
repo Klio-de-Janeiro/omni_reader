@@ -1,7 +1,47 @@
 import JSZip from 'jszip';
 import xmljs from '../vendor-sources/xml-js/lib/index.js';
-import { parseAddress } from '../dist/table-core.js';
+import { parseAddress, columnName } from '../dist/table-core.js';
+import { pdfNumber } from '../dist/pdf-table-core.js';
 const MAX_CELLS = 500000;
+const escapeXml = value => String(value).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/g,'').replace(/[&<>"']/g,char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[char]));
+const declaration = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+
+/** Create an inert OOXML workbook; PDF strings never become executable formulas. */
+export async function writeWorkbook(sheets) {
+  if (!Array.isArray(sheets) || !sheets.length || sheets.length>100) throw new Error('Книга должна содержать от 1 до 100 листов.');
+  const zip = new JSZip(), names = new Set(), relationships = [], contentTypes = [], workbook = [];
+  let total = 0;
+  for (const [index,sheet] of sheets.entries()) {
+    if (typeof sheet.name!=='string' || !sheet.name || sheet.name.length>31 || /[\\/\[\]:*?]/.test(sheet.name) || names.has(sheet.name.toLowerCase()) || !Array.isArray(sheet.rows) || sheet.rows.length>1048576) throw new Error('Неверное имя или размер листа Excel.');
+    names.add(sheet.name.toLowerCase());
+    const widths = [], rows = [];
+    for (const [r,row] of sheet.rows.entries()) {
+      if (!Array.isArray(row) || row.length>512) throw new Error('Лимит Excel: 512 столбцов.');
+      const cells = [];
+      for (const [col,input] of row.entries()) {
+        const value = String(input ?? ''); if (!value) continue;
+        if (value.length>32767 || ++total>MAX_CELLS) throw new Error('Лимит Excel: 500 000 ячеек, до 32767 символов в ячейке.');
+        widths[col] = Math.max(widths[col] || 12,Math.min(48,value.length+2));
+        const address = columnName(col)+(r+1), number = pdfNumber(value);
+        cells.push(number===null ? `<c r="${address}" t="inlineStr" s="1"><is><t xml:space="preserve">${escapeXml(value)}</t></is></c>` : `<c r="${address}"><v>${number}</v></c>`);
+      }
+      rows.push(`<row r="${r+1}">${cells.join('')}</row>`);
+    }
+    const id = index+1, filename = `xl/worksheets/sheet${id}.xml`;
+    const columns = Array.from({length:widths.length},(_,col) => `<col min="${col+1}" max="${col+1}" width="${widths[col] || 12}" customWidth="1"/>`).join('');
+    zip.file(filename,declaration+`<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"/></sheetViews>${columns ? '<cols>'+columns+'</cols>' : ''}<sheetData>${rows.join('')}</sheetData></worksheet>`);
+    workbook.push(`<sheet name="${escapeXml(sheet.name)}" sheetId="${id}" r:id="rId${id}"/>`);
+    relationships.push(`<Relationship Id="rId${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${id}.xml"/>`);
+    contentTypes.push(`<Override PartName="/${filename}" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`);
+  }
+  zip.file('xl/workbook.xml',declaration+`<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${workbook.join('')}</sheets></workbook>`);
+  relationships.push('<Relationship Id="styles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>');
+  zip.file('xl/_rels/workbook.xml.rels',declaration+`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relationships.join('')}</Relationships>`);
+  zip.file('_rels/.rels',declaration+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');
+  zip.file('[Content_Types].xml',declaration+`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${contentTypes.join('')}</Types>`);
+  zip.file('xl/styles.xml',declaration+'<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="49" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>');
+  return new Blob([await zip.generateAsync({type:'uint8array',compression:'DEFLATE'})],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+}
 /** Parse OOXML as inert XML data with no browser DOM or external entities. */
 function xml(text) {
   const parsed = xmljs.xml2js(text, { compact: false, ignoreComment: true, ignoreDoctype: true });

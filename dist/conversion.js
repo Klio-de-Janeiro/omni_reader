@@ -2,7 +2,7 @@ import { validateBlob, MAX_FILE_BYTES } from './validation.js';
 import { isNative, saveOriginal, printDocumentPdf } from './native.js';
 import { openViewer } from './viewers.js';
 
-export const conversionTargets = ext => ({ jpg: ['pdf', 'png'], jpeg: ['pdf', 'png'], png: ['jpg', 'pdf'], docx: ['pdf'], ogg: ['wav'] }[ext] || []);
+export const conversionTargets = ext => ({ jpg: ['pdf', 'png'], jpeg: ['pdf', 'png'], png: ['jpg', 'pdf'], docx: ['pdf'], ogg: ['wav'], pdf: ['xlsx','csv'] }[ext] || []);
 export async function convertImage(file, target) {
   if (!['jpg', 'png', 'pdf'].includes(target)) throw new Error('Неподдерживаемый формат конвертации.');
   const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' }), canvas = document.createElement('canvas');
@@ -55,8 +55,9 @@ export function initConversion({ getRecord, getEditor, notify }) {
       const blob = session ? new File([await session.export()], record.name) : record.blob;
       const name = record.name.replace(/\.[^.]+$/, '') + '.' + target;
       notify('Конвертация…');
-      const result = record.ext === 'ogg' ? await (await import('./audio-conversion.js')).convertOggToWav(blob) : record.ext === 'docx' ? await convertDocx(blob, name) : await convertImage(blob, target);
-      if (result) { const saved = await exportConverted(result, name); notify(saved ? 'Готово: ' + name : 'Сохранение отменено.'); }
+      const pdf = record.ext === 'pdf' ? await (await import('./pdf-conversion.js')).convertPdf(blob,target,{onProgress:(page,total) => notify(`Конвертация PDF: страница ${page} из ${total}…`)}) : null;
+      const result = pdf ? pdf.blob : record.ext === 'ogg' ? await (await import('./audio-conversion.js')).convertOggToWav(blob) : record.ext === 'docx' ? await convertDocx(blob, name) : await convertImage(blob, target);
+      if (result) { const saved = await exportConverted(result, name); notify(saved ? 'Готово: ' + name+(pdf?.warning ? ' · '+pdf.warning : '') : 'Сохранение отменено.'); }
       else notify('В окне печати выберите «Сохранить как PDF».');
     } catch (error) { notify(error.message || 'Ошибка конвертации.', true); }
     finally { session?.setBusy(false); busy = false; sync(); }
@@ -65,7 +66,7 @@ export function initConversion({ getRecord, getEditor, notify }) {
     const record = getRecord(), targets = conversionTargets(record?.ext);
     for (const menu of menus) {
       menu.wrapper.hidden = !targets.length; menu.button.disabled = busy || !!getEditor()?.busy;
-      if (menu.ext !== record?.ext) { menu.ext = record?.ext; menu.close(); menu.list.replaceChildren(); for (const target of targets) { const item = document.createElement('button'); item.type = 'button'; item.setAttribute('role', 'menuitem'); item.textContent = 'В ' + target.toUpperCase(); item.onclick = () => void convert(target); menu.list.append(item); } }
+      if (menu.ext !== record?.ext) { menu.ext = record?.ext; menu.close(); menu.list.replaceChildren(); for (const target of targets) { const item = document.createElement('button'); item.type = 'button'; item.setAttribute('role', 'menuitem'); item.textContent = target==='xlsx' ? 'В Excel (.xlsx)' : 'В ' + target.toUpperCase(); item.onclick = () => void convert(target); menu.list.append(item); } }
     }
   }
   return { sync, get busy() { return busy; } };

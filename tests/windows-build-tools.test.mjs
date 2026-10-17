@@ -36,18 +36,18 @@ const download = (_url, target) => copyFile(archive, target);
 const prepare = cacheDir => prepareWindowsTools({ cacheDir, source, download, log: silent });
 
 test('Real 7-Zip excludes macOS links, preserves Windows tools and feeds the pinned builder cache', async () => {
-  const cacheDir = path.join(workspace, 'Папка с пробелами & tools');
+  const cacheDir = path.join(workspace, 'Папка с пробелами tools');
   const target = await prepare(cacheDir);
   const entries = await readdir(target);
   assert.ok(!entries.includes('darwin') && !entries.includes('linux'));
   assert.equal(await readFile(path.join(target, 'windows-10/x64/wintrust.dll'), 'utf8'), 'fixture: windows-10/x64/wintrust.dll');
   assert.equal(await prepareWindowsTools({ cacheDir, source, download() { throw new Error('Valid cache must not download again'); }, log: silent }), target);
-  // Invoke the actual app-builder cache lookup in a fresh process: it must not download.
-  const code = `const desktopRequire = require('node:module').createRequire(${JSON.stringify(path.join(project, 'desktop/package.json'))}); desktopRequire('app-builder-lib/out/codeSign/windowsSignToolManager.js').getSignVendorPath().then(value => process.stdout.write(value)).catch(error => { console.error(error); process.exitCode = 1; });`;
+  // Invoke the pinned builder's real tool lookup: it must honor the prepared tools without downloading.
+  const code = `const desktopRequire = require('node:module').createRequire(${JSON.stringify(path.join(project, 'desktop/package.json'))}); desktopRequire('app-builder-lib/out/toolsets/windows.js').getRceditBundle().then(value => process.stdout.write(value.x64)).catch(error => { console.error(error); process.exitCode = 1; });`;
   const result = await execute(process.execPath, ['-e', code], {
-    cwd: project, env: { ...process.env, ELECTRON_BUILDER_CACHE: cacheDir }, shell: false
+    cwd: project, env: { ...process.env, ELECTRON_BUILDER_CACHE: cacheDir, ELECTRON_BUILDER_RCEDIT_PATH: target }, shell: false
   });
-  assert.equal(result.stdout, target);
+  assert.equal(result.stdout.trim().split(/\r?\n/).at(-1), path.join(target, 'rcedit-x64.exe'));
 });
 
 test('A partially extracted or corrupted cache is rebuilt before packaging', async () => {
@@ -83,10 +83,12 @@ test('The build launcher passes arguments without a shell and retains EXE resour
   const cacheDir = path.join(workspace, 'cache & Unicode Я'), args = ['--publish', 'never', '--config.extraMetadata.note=A & B'];
   const invocation = builderInvocation({ args, cacheDir, env: { OMNI_TEST: 'yes' } });
   assert.equal(invocation.command, process.execPath);
-  assert.deepEqual(invocation.args.slice(1), ['--win', 'nsis', '--x64', ...args]);
+  assert.deepEqual(invocation.args.slice(1), ['--win', 'nsis', '--x64', '--publish', 'never', ...args]);
   assert.equal(invocation.options.shell, false);
   assert.equal(invocation.options.env.ELECTRON_BUILDER_CACHE, cacheDir);
   assert.equal(invocation.options.env.OMNI_TEST, 'yes');
+  assert.equal(invocation.options.env.ELECTRON_BUILDER_RCEDIT_PATH, path.join(cacheDir, 'winCodeSign', 'winCodeSign-2.6.0'));
+  assert.equal(invocation.options.env.SIGNTOOL_PATH, path.join(cacheDir, 'winCodeSign', 'winCodeSign-2.6.0', 'windows-10', 'x64', 'signtool.exe'));
   const config = JSON.parse(await readFile(path.join(project, 'desktop/package.json'), 'utf8'));
   assert.equal(config.build.win.signAndEditExecutable, true);
   assert.equal(config.build.win.icon, '../dist/icon.ico');

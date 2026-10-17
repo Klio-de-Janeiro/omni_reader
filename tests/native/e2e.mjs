@@ -12,8 +12,11 @@ const browser = await chromium.launch({ headless: true, executablePath: process.
 const results = [];
 await mkdir('test-results', { recursive: true });
 try {
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, permissions: ['clipboard-read', 'clipboard-write'], serviceWorkers: 'block' });
+  // The desktop bridge prevents app SW registration. Playwright's SW-blocking
+  // init script itself throws in the intentionally opaque Office sandbox.
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, permissions: ['clipboard-read', 'clipboard-write'] });
   await context.addInitScript(() => {
+    if (window.top !== window) return;
     window.__exports = [];
     window.omniDesktop = { save: async input => { window.__exports.push({ name: input.name, bytes: Array.from(new Uint8Array(input.bytes)) }); return true; }, onFiles: () => {} };
   });
@@ -25,7 +28,7 @@ try {
     catch { await route.fulfill({ status: 404, body: 'Not found' }); }
   });
   const page = await context.newPage();
-  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  const errors = []; page.on('pageerror', error => errors.push(error.stack || error.message));
   await page.goto(base + '/index.html');
   await page.locator('#remember').uncheck();
   async function waitFor(predicate) {
@@ -35,7 +38,8 @@ try {
   }
   async function open(ext) {
     await page.locator('#file-input').setInputFiles(`tests/fixtures/sample.${ext}`);
-    await page.locator('#reader-name').filter({ hasText: `sample.${ext}` }).waitFor();
+    await page.locator('#reader-name').filter({ hasText: `sample.${ext}` }).waitFor({ state: 'attached' });
+    if (await page.locator('body').evaluate(el => el.classList.contains('focus-mode'))) await page.locator('#focus-exit').click();
     await waitFor(() => document.querySelector('#viewer').getAttribute('aria-busy') === 'false');
     assert.equal(await page.locator('.error-state').count(), 0, await page.locator('#viewer').innerText());
   }
@@ -84,6 +88,7 @@ try {
   for (const ext of ['csv', 'xlsx', 'docx', 'pptx', 'pdf', 'wav', 'jpg', 'png']) {
     await page.getByRole('button', { name: `Открыть sample.${ext}`, exact: true }).first().click();
     await waitFor(() => document.querySelector('#viewer').getAttribute('aria-busy') === 'false');
+    if (await page.locator('body').evaluate(el => el.classList.contains('focus-mode'))) await page.locator('#focus-exit').click();
     await page.locator('#edit-file').click();
     await page.locator('.editor-panel').waitFor();
     if (ext === 'csv' || ext === 'xlsx') {
@@ -110,10 +115,11 @@ try {
       await page.waitForFunction(()=>!document.querySelector('.office-editor select').disabled);
       assert.equal(await page.frameLocator('.office-edit-canvas iframe').getByRole('textbox',{name:'Текст документа'}).first().textContent(),'Клио после правки');
       await page.locator('#focus-toggle').click();assert.match(await page.locator('body').getAttribute('class'),/focus-mode/);
-      await page.locator('#focus-toggle').click();
+      await page.locator('#focus-exit').click();
     } else if (ext === 'pdf') {
       await page.getByRole('button', { name: 'Повернуть на 90°', exact: true }).click();
-      await page.getByLabel('Редактируемая страница PDF').selectOption('1');
+      await page.getByLabel('Номер страницы редактора', { exact: true }).fill('2');
+      await page.getByLabel('Номер страницы редактора', { exact: true }).dispatchEvent('change');
       await page.getByRole('button', { name: 'Убрать страницу', exact: true }).click();
     } else if (ext === 'wav') {
       await page.getByLabel('Начало, секунды', { exact: true }).fill('0.25');
@@ -121,14 +127,19 @@ try {
       await page.getByLabel('Громкость, dB', { exact: true }).fill('-6');
       await page.getByRole('button', { name: 'Применить звук' }).click();
     } else {
+      await page.getByRole('button', { name: 'Обрезать / повернуть', exact: true }).click();
+      await page.getByText('Размеры, px', { exact: true }).click();
       await page.getByLabel('Ширина, px', { exact: true }).fill('100');
+      await page.getByLabel('Ширина, px', { exact: true }).dispatchEvent('change');
       await page.getByLabel('Высота, px', { exact: true }).fill('60');
-      await page.getByRole('button', { name: 'Применить обрезку' }).click();
+      await page.getByLabel('Высота, px', { exact: true }).dispatchEvent('change');
       await page.getByRole('button', { name: 'Повернуть на 90°', exact: true }).click();
+      await page.getByRole('button', { name: 'Применить', exact: true }).click();
     }
     await page.screenshot({ path: `test-results/editor-${ext}.png`, fullPage: true });
     await page.getByRole('button', { name: 'Сохранить копию', exact: true }).click();
-    await page.locator('#reader-name').filter({ hasText: `sample-edited-1.${ext}` }).waitFor();
+    await page.locator('#reader-name').filter({ hasText: `sample-edited-1.${ext}` }).waitFor({ state: 'attached' });
+    if (await page.locator('body').evaluate(el => el.classList.contains('focus-mode'))) await page.locator('#focus-exit').click();
     await page.waitForFunction(extension => window.__exports.some(item => item.name === `sample-edited-1.${extension}`), ext);
     const exported = await page.evaluate(extension => window.__exports.find(item => item.name === `sample-edited-1.${extension}`), ext);
     const bytes = Uint8Array.from(exported.bytes); await writeFile(`test-results/ui-edited.${ext}`, bytes);

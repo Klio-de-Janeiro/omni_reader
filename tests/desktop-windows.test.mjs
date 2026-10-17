@@ -101,13 +101,13 @@ test('Desktop routes each import and OS file to its own trusted window', async (
   const imported = notebookWindow.webContents.sent[0].data[0];
   assert.equal(imported.sourcePath, undefined); assert.equal(imported.bytes, undefined); assert.match(imported.url, /^omni:\/\/app\/native\//);
   assert.equal(handlers.get('omni-read-image')(event(notebookWindow), imported.imageSource, 'seminar_data/2b827.png'), 'data:image/png;base64,cG5n');
-  assert.deepEqual(imageReads.at(-1), {base:'/docs', relative:'seminar_data/2b827.png'});
+  assert.deepEqual(imageReads.at(-1), {base:path.resolve('/docs'), relative:'seminar_data/2b827.png'});
   assert.equal(handlers.get('omni-read-image')(event(otherWindow), imported.imageSource, 'seminar_data/2b827.png'), null);
   await handlers.get('omni-open-file')(event(otherWindow), {name:'selected.md', bytes:new ArrayBuffer(4), sourcePath:'/selected/selected.md'});
   const selectedWindow = created.at(-1); handlers.get('omni-ready')(event(selectedWindow));
   const selected = selectedWindow.webContents.sent[0].data[0];
   handlers.get('omni-read-image')(event(selectedWindow), selected.imageSource, 'image.png');
-  assert.equal(imageReads.at(-1).base, '/selected');
+  assert.equal(imageReads.at(-1).base, path.dirname('/selected/selected.md'));
   saveResult={canceled:false,filePath:'/exports/copy.png'};
   assert.equal(await handlers.get('omni-save-start')(event(selectedWindow),'copy.png'),true);
   await assert.rejects(handlers.get('omni-save-start')(event(selectedWindow),'another.png'),/Invalid/);
@@ -123,7 +123,7 @@ test('Desktop routes each import and OS file to its own trusted window', async (
   const audioWindow = created.at(-1); handlers.get('omni-ready')(event(audioWindow));
   const audioFile = audioWindow.webContents.sent[0].data[0];
   const recognized = await handlers.get('omni-speech-run')(event(audioWindow), { id:'recognize', name:audioFile.name, url:audioFile.url });
-  assert.equal(recognized.text, 'Речь'); assert.deepEqual(speechCalls.at(-1), { owner:audioWindow.webContents.id, id:'recognize', audio:'/audio/recording.ogg' });
+  assert.equal(recognized.text, 'Речь'); assert.deepEqual(speechCalls.at(-1), { owner:audioWindow.webContents.id, id:'recognize', audio:path.resolve('/audio/recording.ogg') });
   assert.equal(audioWindow.webContents.sent.at(-1).type, 'omni-speech-progress');
   await assert.rejects(handlers.get('omni-speech-run')(event(otherWindow), { id:'foreign', name:audioFile.name, url:audioFile.url }), /не принадлежит/);
   await assert.rejects(handlers.get('omni-speech-run')(event(audioWindow), { id:'arbitrary', name:'recording.ogg', url:'file:///private/audio.ogg' }), /источник/);

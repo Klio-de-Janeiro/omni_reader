@@ -21,6 +21,9 @@ async function fixture(t, options = {}) {
   t.after(() => rm(dir, { recursive: true, force: true }));
   const modules = path.join(dir, 'modules'), model = path.join(dir, options.folder ? 'модель small' : 'модель small.pt');
   await mkdir(modules);
+  // Model doubles never decode audio, but the worker validates FFmpeg before loading .pt.
+  const ffmpeg = path.join(dir, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+  await writeFile(ffmpeg, '', { mode: 0o755 });
   const ext = options.folder ? 'wav' : 'ogg';
   const source = path.join(dir, 'запись & пример.' + ext);
   await writeFile(source, await readFile(path.join(root, 'tests/fixtures/sample.' + ext)));
@@ -36,11 +39,17 @@ async function fixture(t, options = {}) {
   const service = new SpeechService(path.join(dir, 'settings'), worker, {
     spawn(command, args, opts) {
       assert.equal(opts.shell, false);
+      if (path.basename(command).toLowerCase() === 'taskkill.exe') {
+        assert.deepEqual(args.filter((_, index) => index !== 1), ['/PID', '/T', '/F']);
+        return spawn(command, args, opts);
+      }
       assert.deepEqual(args, ['-u', worker]);
       return spawn(command, args, { ...opts, env: { ...opts.env, PYTHONPATH: modules, OMNI_TEST_CAPTURE:capture, ...options.env } });
     }
   });
+  t.after(() => service.cancel(service.job?.owner, service.job?.id));
   await service.configure('python', python);
+  await service.configure('ffmpeg', ffmpeg);
   await service.configure(options.folder ? 'model-folder' : 'model-file', model);
   return { service, dir, source, model, capture };
 }

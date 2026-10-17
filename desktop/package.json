@@ -10,8 +10,9 @@
     "dist:win": "node ../scripts/build-windows.mjs"
   },
   "devDependencies": {
-    "electron": "42.1.0",
-    "electron-builder": "26.0.12"
+    "7zip-bin": "5.2.0",
+    "electron": "42.11.15",
+    "electron-builder": "26.15.3"
   },
   "overrides": {
     "@electron/rebuild@3.7.0": {

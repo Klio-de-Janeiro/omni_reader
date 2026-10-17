@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -16,7 +16,7 @@ export const WINDOWS_TOOLS = {
   // Same SHA-512 as app-builder's DownloadWinCodeSign; verify before unpacking.
   checksum: '6LQI2d9BPC3Xs0ZoTQe1o3tPiA28c7+PY69Q9i/pD8lY45psMtHuLwv3vRckiVr3Zx1cbNyLlBR8STwCdcHwtA=='
 };
-const requiredFiles = ['rcedit-x64.exe', 'rcedit-ia32.exe', 'windows-10/x64/signtool.exe', 'windows-10/ia32/signtool.exe', 'windows-6/signtool.exe'];
+const requiredFiles = ['rcedit-x64.exe', 'rcedit-ia32.exe', 'rcedit-x86.exe', 'windows-10/x64/signtool.exe', 'windows-10/ia32/signtool.exe', 'windows-6/signtool.exe'];
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const safePath = value => typeof value === 'string' && value.length > 0 && !path.posix.isAbsolute(value) && !value.includes('\\') && !value.split('/').includes('..') && !value.includes(':');
 
@@ -52,7 +52,11 @@ export async function prepareWindowsTools({ cacheDir, source = WINDOWS_TOOLS, do
   const temporary = await mkdtemp(path.join(parent, 'omni-prepare-')), archive = path.join(temporary, 'tools.7z'), unpacked = path.join(temporary, 'unpacked');
   try {
     log('Preparing Windows build tools without symbolic links...');
-    const fetchArchive = download || desktopRequire('app-builder-lib/out/binDownload.js').download;
+    const fetchArchive = download || (async (url, output) => {
+      const response = await fetch(url, { signal: AbortSignal.timeout(120000) });
+      if (!response.ok) throw new Error(`Windows tools download failed: HTTP ${response.status}`);
+      await writeFile(output, new Uint8Array(await response.arrayBuffer()));
+    });
     await fetchArchive(source.url, archive, source.checksum);
     if (createHash('sha512').update(await readFile(archive)).digest('base64') !== source.checksum) throw new Error('Windows tools checksum mismatch. The downloaded archive was not unpacked.');
     await mkdir(unpacked);
@@ -60,6 +64,8 @@ export async function prepareWindowsTools({ cacheDir, source = WINDOWS_TOOLS, do
     const args = ['x', '-bd', '-y', archive, '-o' + unpacked, '-xr!darwin', '-xr!linux'];
     if (extract) await extract(args);
     else await execute(desktopRequire('7zip-bin').path7za, args, { windowsHide: true, shell: false });
+    // The builder's directory override calls the legacy ia32 executable x86.
+    await copyFile(path.join(unpacked, 'rcedit-ia32.exe'), path.join(unpacked, 'rcedit-x86.exe'));
     const files = await inventory(unpacked), names = new Set(files.map(item => item.file));
     if (requiredFiles.some(file => !names.has(file))) throw new Error('The Windows tools archive is incomplete: rcedit or signtool is missing.');
     if (files.some(item => /^(darwin|linux)\//.test(item.file))) throw new Error('Non-Windows tools were unexpectedly unpacked.');
@@ -73,14 +79,15 @@ export async function prepareWindowsTools({ cacheDir, source = WINDOWS_TOOLS, do
 }
 
 export function builderInvocation({ args = [], env = process.env, cacheDir, cli = desktopRequire.resolve('electron-builder/out/cli/cli.js') }) {
-  return { command: process.execPath, args: [cli, '--win', 'nsis', '--x64', ...args], options: { cwd: path.join(project, 'desktop'), env: { ...env, ELECTRON_BUILDER_CACHE: cacheDir }, stdio: 'inherit', shell: false, windowsHide: true } };
+  const tools = path.join(cacheDir, 'winCodeSign', `winCodeSign-${WINDOWS_TOOLS.version}`);
+  return { command: process.execPath, args: [cli, '--win', 'nsis', '--x64', '--publish', 'never', ...args], options: { cwd: path.join(project, 'desktop'), env: { ...env, ELECTRON_BUILDER_CACHE: cacheDir, ELECTRON_BUILDER_RCEDIT_PATH: tools, SIGNTOOL_PATH: path.join(tools, 'windows-10', 'x64', 'signtool.exe') }, stdio: 'inherit', shell: false, windowsHide: true } };
 }
 
 /** Build through the existing NSIS configuration using a separate local tool cache. */
 export async function buildWindows(args = process.argv.slice(2)) {
   if (process.platform !== 'win32') throw new Error('Run BUILD_WINDOWS.cmd on Windows to build the Windows installer.');
   const version = desktopRequire('app-builder-lib/package.json').version;
-  if (version !== '26.0.12') throw new Error(`Windows tool preparation expects electron-builder 26.0.12; installed ${version}. Restore desktop dependencies with npm ci.`);
+  if (version !== '26.15.3') throw new Error(`Windows tool preparation expects electron-builder 26.15.3; installed ${version}. Restore desktop dependencies with npm ci.`);
   const cacheDir = path.join(project, '.tools', 'electron-builder-windows');
   await prepareWindowsTools({ cacheDir });
   const invocation = builderInvocation({ args, cacheDir });

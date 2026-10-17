@@ -242,18 +242,19 @@ test('Touchpad preserves native scrolling and coalesces pinch events during rend
   const w = new JSDOM('<div id="view"></div>', { pretendToBeVisual: true }).window;
   globalThis.requestAnimationFrame = w.requestAnimationFrame.bind(w); globalThis.cancelAnimationFrame = w.cancelAnimationFrame.bind(w);
   const root = w.document.querySelector('#view'), controller = new AbortController();
-  let zoom = 1, active = 0, maxActive = 0; const values = [];
+  let zoom = 1, active = 0, maxActive = 0, release; const values = [];
   const gestures = bindZoomGestures(root, { signal: controller.signal, getZoom: () => zoom, async setZoom(value) {
     active++; maxActive = Math.max(maxActive, active); values.push(value);
-    await new Promise(resolve => setTimeout(resolve, 30)); zoom = value; active--;
+    await new Promise(resolve => { release = resolve; }); zoom = value; active--;
   } });
   const wheel = (deltaY, ctrlKey = true) => { const event = new w.WheelEvent('wheel', { deltaY, ctrlKey, cancelable: true }); root.dispatchEvent(event); return event; };
   try {
     assert.equal(wheel(30, false).defaultPrevented, false); assert.equal(values.length, 0);
-    wheel(-50); wheel(-50); await new Promise(resolve => setTimeout(resolve, 22));
-    wheel(-50); wheel(-50); await new Promise(resolve => setTimeout(resolve, 100));
+    const frame = () => new Promise(resolve => w.requestAnimationFrame(resolve));
+    wheel(-50); wheel(-50); await frame();
+    wheel(-50); wheel(-50); release(); await frame(); release(); await frame();
     assert.equal(maxActive, 1); assert.equal(values.length, 2); assert.ok(Math.abs(zoom - Math.exp(0.4)) < 1e-10);
-    wheel(600); await new Promise(resolve => setTimeout(resolve, 70)); assert.equal(zoom, 0.5);
+    wheel(600); await frame(); release(); await frame(); assert.equal(zoom, 0.5);
     controller.abort(); assert.equal(wheel(-100).defaultPrevented, false);
-  } finally { gestures.dispose(); w.close(); }
+  } finally { release?.(); gestures.dispose(); w.close(); }
 });
