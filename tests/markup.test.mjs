@@ -106,7 +106,7 @@ test('Fullscreen button edits Markdown, previews the draft and saves a copy; Ctr
   const key = data => { const event = new w.KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...data }); (w.document.querySelector('textarea:not([hidden])') || w.document).dispatchEvent(event); return event; };
   try {
     let app = await readFile(new URL('../dist/app.js', import.meta.url), 'utf8');
-    app = app.replace(/^import .*;\n/gm, '').replace("const { openEditor } = await import('./editors/ui.js');", 'const { openEditor } = window;');
+    app = app.replace(/^import .*;\r?\n/gm, '').replace("const { openEditor } = await import('./editors/ui.js');", 'const { openEditor } = window;');
     w.localStorage.setItem('omni.autosave','true');w.eval(app); await until(() => w.document.querySelector('.file-open'));
     const remember=w.document.querySelector('#remember');assert.equal(remember.checked,true);remember.checked=false;remember.dispatchEvent(new w.Event('change'));assert.equal(w.localStorage.getItem('omni.autosave'),'false');w.dispatchEvent(new w.StorageEvent('storage',{key:'omni.autosave',newValue:'true'}));assert.equal(remember.checked,true);remember.checked=false;remember.dispatchEvent(new w.Event('change'));
     await w.selectFile('one'); assert.equal(w.document.body.classList.contains('focus-mode'), true);

@@ -167,7 +167,7 @@ test('Fullscreen host exposes source editing and exports .env copies without an 
   w.URL.createObjectURL = () => 'blob:test'; w.URL.revokeObjectURL = () => {};
   try {
     let app = await readFile(new URL('../dist/app.js', import.meta.url), 'utf8');
-    app = app.replace(/^import .*;\n/gm, '').replace("const { openEditor } = await import('./editors/ui.js');", 'const { openEditor } = window;');
+    app = app.replace(/^import .*;\r?\n/gm, '').replace("const { openEditor } = await import('./editors/ui.js');", 'const { openEditor } = window;');
     w.eval(app); await until(() => w.document.querySelector('.file-open')); await w.selectFile('env');
     const edit = w.document.querySelector('#focus-edit'); assert.equal(edit.hidden, false); assert.equal(w.document.body.classList.contains('focus-mode'), true);
     edit.click(); await until(() => !edit.disabled && w.document.querySelector('textarea'));

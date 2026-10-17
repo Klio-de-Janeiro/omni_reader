@@ -140,7 +140,7 @@ test('Actual fullscreen host switches Ctrl+D, applies Ctrl+E, preserves draft, r
   Object.assign(w,{initConversion:()=>({sync(){}}),File,TextEncoder,normalizeMode:value=>value==='page'?'page':'scroll',shortcutCommand,getShortcutBindings,shortcutLabel,initShortcutSettings,createReadHighlights,initThemes,copyText:async()=>{},isNative:true,hasDocumentWindows:false,saveOriginal:async record=>{exported=record;},setNativeFullscreen:()=>true,setNativeDocument(){},connectNativeFiles(){},listFiles:async()=>[record],saveFile:async()=>{},removeFile:async()=>{},formatSize:()=> '1 B',validateFile,validateBytes,validateBlob,openViewer,openEditor});
   w.URL.createObjectURL=()=> 'blob:test';w.URL.revokeObjectURL=()=>{};
   try {
-    let app=await readFile(new URL('../dist/app.js',import.meta.url),'utf8');app=app.replace(/^import .*;\n/gm,'').replace("const { openEditor } = await import('./editors/ui.js');",'const { openEditor } = window;');w.eval(app);
+    let app=await readFile(new URL('../dist/app.js',import.meta.url),'utf8');app=app.replace(/^import .*;\r?\n/gm,'').replace("const { openEditor } = await import('./editors/ui.js');",'const { openEditor } = window;');w.eval(app);
     await until(()=>w.document.querySelector('.file-open'));await w.selectFile('code');assert.ok(w.document.body.classList.contains('focus-mode'));
     const root=w.document.querySelector('#viewer'),code=root.querySelector('code');select(w,code,11,16);
     assert.ok(key(w,code,'KeyE',{ctrlKey:true,key:'у'}).defaultPrevented);assert.ok(root.querySelector('mark'));assert.equal(w.document.querySelector('#focus-highlight').hidden,false);
