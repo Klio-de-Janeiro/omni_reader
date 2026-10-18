@@ -8,7 +8,12 @@ import { createRequire } from 'node:module';
 const nativeRequire = createRequire(import.meta.url);
 
 test('Desktop routes each import and OS file to its own trusted window', async () => {
-  const created = [], handlers = new Map(), savedIn = [], imageReads = [], exportOps = [], speechCalls = [], speechCancels = [], speechChoices = [];
+  const created = [], handlers = new Map(), savedIn = [], imageReads = [], exportOps = [], speechCalls = [], speechCancels = [], speechChoices = [], latexSaves = [], latexCompiles = [];
+  class LatexService {
+    async status() { return { available: true, engine: 'Tectonic' }; }
+    async compile(input, options) { latexCompiles.push({ input, options }); return { ok: true, pdf: new Uint8Array([37,80,68,70,45]), log: '', diagnostics: [] }; }
+  }
+  const latexFiles = { async saveLatexFile(...args) { latexSaves.push(args); }, async saveLatexDestination(...args) { latexSaves.push(args); }, async collectLatexFiles() { return []; } };
   let saveResult = { canceled: true };
   let openResult = { canceled: true };
   class SpeechService {
@@ -45,8 +50,8 @@ test('Desktop routes each import and OS file to its own trusted window', async (
     async rename(from,to){exportOps.push(['rename',from,to]);},async rm(name){exportOps.push(['rm',name]);} };
   const documentImages = { readDocumentImage(base, relative) { imageReads.push({base, relative}); return 'data:image/png;base64,cG5n'; } };
   vm.runInNewContext(await readFile(new URL('../desktop/main.cjs', import.meta.url), 'utf8'), {
-    require(name) { if (['node:crypto','node:url'].includes(name)) return nativeRequire(name); if (name === 'electron') return electron; if (name === 'node:fs/promises') return fs; if (name === 'node:path') return path; if(name === './speech.cjs') return {SpeechService}; if(name === './document-images.cjs') return documentImages; throw new Error(name); },
-    __dirname: '/application/desktop', process: { platform: 'win32', argv: ['electron', '/application'] }, ArrayBuffer, Buffer, URL, Response
+    require(name) { if (['node:crypto','node:url'].includes(name)) return nativeRequire(name); if (name === 'electron') return electron; if (name === 'node:fs/promises') return fs; if (name === 'node:path') return path; if(name === './speech.cjs') return {SpeechService}; if(name === './document-images.cjs') return documentImages; if(name === './latex.cjs') return {LatexService}; if(name === './latex-files.cjs') return latexFiles; throw new Error(name); },
+    __dirname: '/application/desktop', process: { platform: 'win32', argv: ['electron', '/application'] }, ArrayBuffer, Buffer, URL, Response, AbortController
   });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(app.modelId, 'dev.klio.omni');
@@ -142,5 +147,22 @@ test('Desktop routes each import and OS file to its own trusted window', async (
   audioWindow.destroy(); assert.equal(speechCancels.at(-1).owner,audioWindow.webContents.id);
   const pdf=await handlers.get('omni-pdf')(event(selectedWindow),'<html><body>Document</body></html>');
   assert.match(pdf.toString(),/^%PDF/);const print=created.at(-1);assert.equal(print.options.webPreferences.javascript,false);assert.equal(print.options.webPreferences.nodeIntegration,false);assert.equal(print.destroyed,true);assert.equal(print.webContents.printOptions.preferCSSPageSize,true);
+
+  app.emit('second-instance', {}, ['electron', '/tex/main.tex']);
+  await new Promise(resolve => setImmediate(resolve));
+  const texWindow = created.at(-1); handlers.get('omni-ready')(event(texWindow));
+  const tex = texWindow.webContents.sent[0].data[0], draft = '\\documentclass{article}';
+  assert.equal((await handlers.get('omni-latex-status')(event(texWindow))).available, true);
+  await assert.rejects(handlers.get('omni-latex-compile')(event(texWindow), { id:'tex-1',name:'main.tex',source:draft }), /доверие/);
+  await assert.rejects(handlers.get('omni-latex-compile')(event(otherWindow), { id:'tex-2',name:'main.tex',source:draft,trusted:true,nativeUrl:tex.url }), /не принадлежит/);
+  await handlers.get('omni-latex-compile')(event(texWindow), { id:'tex-3',name:'main.tex',source:draft,trusted:true,nativeUrl:tex.url });
+  assert.equal(latexCompiles.at(-1).input.source, draft);
+  assert.equal(latexCompiles.at(-1).options.signal.aborted, false);
+  const saveTex = { url:tex.url,name:'main.tex',bytes:new Uint8Array([1,2]),expected:new Uint8Array([3,4]) };
+  await assert.rejects(handlers.get('omni-latex-save')(event(otherWindow), saveTex), /не принадлежит/);
+  assert.equal((await handlers.get('omni-latex-save')(event(texWindow), saveTex)).saved, true);
+  assert.equal(latexSaves.at(-1)[0], path.resolve('/tex/main.tex'));
+  assert.deepEqual([...latexSaves.at(-1)[1]], [1,2]);
+  assert.throws(() => handlers.get('omni-latex-status')({ ...event(texWindow), senderFrame:{url:'omni://app/index.html'} }), /Invalid sender/);
 
 });

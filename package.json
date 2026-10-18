@@ -6,9 +6,11 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "start": "node scripts/serve.mjs",
-    "test": "node --test --test-timeout=60000 tests/validation.test.mjs tests/table-core.test.mjs tests/editors.test.mjs tests/rich-office.test.mjs tests/inline-modes.test.mjs tests/office-host.test.mjs tests/docx-entry-gestures.test.mjs tests/desktop-windows.test.mjs tests/markup.test.mjs tests/themes-painting.test.mjs tests/source-files.test.mjs tests/shortcuts-highlights-syntax.test.mjs tests/document-images-csv.test.mjs tests/conversion-large-doc.test.mjs tests/speech.test.mjs tests/pdf-conversion.test.mjs tests/windows-build-tools.test.mjs",
+    "test": "node --test --test-timeout=60000 tests/validation.test.mjs tests/table-core.test.mjs tests/editors.test.mjs tests/rich-office.test.mjs tests/inline-modes.test.mjs tests/office-host.test.mjs tests/docx-entry-gestures.test.mjs tests/desktop-windows.test.mjs tests/markup.test.mjs tests/themes-painting.test.mjs tests/source-files.test.mjs tests/shortcuts-highlights-syntax.test.mjs tests/document-images-csv.test.mjs tests/conversion-large-doc.test.mjs tests/speech.test.mjs tests/pdf-conversion.test.mjs tests/windows-build-tools.test.mjs tests/latex-editor.test.mjs tests/latex-service.test.mjs tests/latex-files.test.mjs tests/latex-http.test.mjs",
     "test:e2e": "node tests/native/e2e.mjs",
-    "native:sync": "node scripts/sync-native.mjs"
+    "native:sync": "node scripts/sync-native.mjs",
+    "latex:setup": "node scripts/setup-latex.mjs",
+    "test:e2e:latex": "node tests/native/latex-e2e.mjs"
   },
   "dependencies": {
     "@aiden0z/pptx-renderer": "1.3.0",

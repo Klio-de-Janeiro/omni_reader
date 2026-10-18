@@ -33,3 +33,5 @@ venv/
 tests/results.json
 /assistant-test-*/
 /voice test & */
+desktop/latex-runtime/
+/debug.log

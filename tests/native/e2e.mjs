@@ -130,9 +130,11 @@ try {
       await page.getByRole('button', { name: 'Обрезать / повернуть', exact: true }).click();
       await page.getByText('Размеры, px', { exact: true }).click();
       await page.getByLabel('Ширина, px', { exact: true }).fill('100');
-      await page.getByLabel('Ширина, px', { exact: true }).dispatchEvent('change');
+      await page.getByLabel('Ширина, px', { exact: true }).press('Tab');
+      await page.waitForFunction(() => document.querySelector('[aria-label="Размер области обрезки"]').value.startsWith('100 ×'));
       await page.getByLabel('Высота, px', { exact: true }).fill('60');
-      await page.getByLabel('Высота, px', { exact: true }).dispatchEvent('change');
+      await page.getByLabel('Высота, px', { exact: true }).press('Tab');
+      await page.waitForFunction(() => document.querySelector('[aria-label="Размер области обрезки"]').value === '100 × 60 px');
       await page.getByRole('button', { name: 'Повернуть на 90°', exact: true }).click();
       await page.getByRole('button', { name: 'Применить', exact: true }).click();
     }

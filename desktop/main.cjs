@@ -5,6 +5,8 @@ const { randomUUID } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { readDocumentImage } = require('./document-images.cjs');
 const { SpeechService } = require('./speech.cjs');
+const { LatexService } = require('./latex.cjs');
+const { saveLatexFile, saveLatexDestination, collectLatexFiles } = require('./latex-files.cjs');
 let speech;
 // Match the installer shortcut identity so Windows groups and pins Omni correctly.
 if (process.platform === 'win32') app.setAppUserModelId('dev.klio.omni');
@@ -37,6 +39,7 @@ function createWindow() {
   const id = window.webContents.id;
   windows.set(id, state);
   window.on('closed', () => {
+    state.latexRequest?.controller.abort();
     if (state.speechRequest) state.speechRequest.cancelled = true;
     speech?.cancel(id);
     windows.delete(id);
@@ -121,6 +124,60 @@ if (locked) app.whenReady().then(async () => {
     } catch { return new Response('Not found', { status: 404 }); }
   });
   ipcMain.handle('omni-ready', event => { const state = senderState(event); state.loaded = true; deliver(state); });
+  const latexService = state => state.latex || (state.latex = new LatexService({
+    cacheDir: path.join(app.getPath('userData'), 'latex'),
+    runtimeDir: path.join(app.isPackaged ? process.resourcesPath : __dirname, 'latex-runtime')
+  }));
+  function latexFile(event, url) {
+    let parsed;
+    try { parsed = new URL(url); } catch { throw new Error('Неверный источник TeX. Откройте исходник с диска заново.'); }
+    const file = parsed.protocol === 'omni:' && parsed.hostname === 'app' && parsed.pathname.startsWith('/native/') && nativeFiles.get(parsed.pathname.slice(8));
+    if (!file || file.owner !== event.sender.id || path.extname(file.path).toLowerCase() !== '.tex') throw new Error('Исходник TeX не принадлежит этому окну.');
+    return file;
+  }
+  ipcMain.handle('omni-latex-status', event => latexService(senderState(event)).status());
+  ipcMain.handle('omni-latex-compile', async (event, input) => {
+    const state = senderState(event);
+    if (!input || input.trusted !== true || typeof input.id !== 'string' || !/^[\w-]{1,80}$/.test(input.id) || typeof input.source !== 'string' || Buffer.byteLength(input.source) > 8 * 1024 * 1024) throw new Error('Подтвердите доверие к проекту и проверьте размер исходника TeX.');
+    if (state.latexRequest) throw new Error('В этом окне уже выполняется компиляция.');
+    const request = { id: input.id, controller: new AbortController() }; state.latexRequest = request;
+    try {
+      const companions = input.nativeUrl ? await collectLatexFiles(latexFile(event, input.nativeUrl).path, input.source) : [];
+      if (input.files !== undefined && !Array.isArray(input.files)) throw new Error('Неверный список файлов проекта.');
+      const selected = new Map(companions.map(file => [file.path.toLowerCase(), file]));
+      for (const file of input.files || []) {
+        if (typeof file?.path !== 'string') throw new Error('Неверный файл проекта.');
+        selected.set(file.path.toLowerCase(), file);
+      }
+      return await latexService(state).compile({ ...input, files: [...selected.values()] }, { signal: request.controller.signal });
+    } finally { if (state.latexRequest === request) state.latexRequest = null; }
+  });
+  ipcMain.handle('omni-latex-cancel', (event, id) => {
+    const request = senderState(event).latexRequest;
+    if (!request || request.id !== id) return false;
+    request.controller.abort(); return true;
+  });
+  ipcMain.handle('omni-latex-save', async (event, input) => {
+    const state = senderState(event);
+    if (state.latexSaving || !input || typeof input.name !== 'string' || !/\.tex$/i.test(input.name) || !ArrayBuffer.isView(input.bytes) || !ArrayBuffer.isView(input.expected) || input.bytes.byteLength > 8 * 1024 * 1024 || input.expected.byteLength > 8 * 1024 * 1024) throw new Error('Неверный запрос сохранения TeX.');
+    state.latexSaving = true;
+    try {
+      const bytes = Buffer.from(input.bytes.buffer, input.bytes.byteOffset, input.bytes.byteLength);
+      const expected = Buffer.from(input.expected.buffer, input.expected.byteOffset, input.expected.byteLength);
+      if (input.url) {
+        const source = latexFile(event, input.url);
+        await saveLatexFile(source.path, bytes, expected);
+        return { saved: true, url: input.url };
+      }
+      const selected = await dialog.showSaveDialog(state.window, { title: 'Сохранить исходник TeX', defaultPath: path.basename(input.name), filters: [{ name: 'LaTeX', extensions: ['tex'] }] });
+      if (selected.canceled || !selected.filePath || state.window.isDestroyed()) return { saved: false };
+      if (path.extname(selected.filePath).toLowerCase() !== '.tex') throw new Error('Выберите файл с расширением .tex.');
+      // Overwrite permission for a new destination comes from the system save dialog.
+      await saveLatexDestination(selected.filePath, bytes);
+      const key = randomUUID(); nativeFiles.set(key, { path: selected.filePath, owner: event.sender.id });
+      return { saved: true, url: 'omni://app/native/' + key };
+    } finally { state.latexSaving = false; }
+  });
   ipcMain.handle('omni-open-file', (event, input) => {
     const state = senderState(event);
     if (!input || (!(input.bytes instanceof ArrayBuffer) && typeof input.sourcePath !== 'string') || (input.bytes && input.bytes.byteLength > MAX) || typeof input.name !== 'string' || !allowedName(input.name)) throw new Error('Invalid file import');

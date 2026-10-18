@@ -155,7 +155,7 @@ test('Packaged desktop includes the backend and extracts only the required Pytho
   assert.equal(config.files.some(file => /^(recorder|voice-|speaker-|qwen-|reminder)/.test(file)), false);
   assert.ok(config.files.includes('!www/recorder*'));
   assert.ok(config.files.includes('speech-session.cjs'));
-  assert.deepEqual(config.extraResources, [
+  assert.deepEqual(config.extraResources.filter(item => item.from === 'speech'), [
     { from:'speech', to:'speech', filter:['transcribe.py'] }
   ]);
 });

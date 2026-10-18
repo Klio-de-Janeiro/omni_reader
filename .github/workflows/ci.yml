@@ -39,6 +39,8 @@ jobs:
         run: npx playwright install --with-deps chromium --only-shell
       - if: runner.os == 'Linux'
         run: npm run test:e2e
+      - if: runner.os == 'Linux'
+        run: npm run test:e2e:latex
       - if: failure()
         uses: actions/upload-artifact@v4
         with:

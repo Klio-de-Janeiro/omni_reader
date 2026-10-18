@@ -1,12 +1,15 @@
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
+import { createLatexService, handleLatexRequest } from './latex-http.mjs';
 const root = resolve('dist');
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || '127.0.0.1';
+const latex = createLatexService();
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.wasm': 'application/wasm', '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.bcmap': 'application/octet-stream' };
 createServer(async (req, res) => {
   try {
+    if (await handleLatexRequest(req, res, latex)) return;
     const url = new URL(req.url, 'http://localhost');
     const path = resolve(root, '.' + decodeURIComponent(url.pathname));
     if (path !== root && !path.startsWith(root + sep)) { res.writeHead(403); res.end(); return; }

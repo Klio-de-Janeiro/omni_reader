@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { setupLatex } from './setup-latex.mjs';
 
 const project = fileURLToPath(new URL('../', import.meta.url));
 const desktopRequire = createRequire(path.join(project, 'desktop/package.json'));
@@ -86,6 +87,7 @@ export function builderInvocation({ args = [], env = process.env, cacheDir, cli 
 /** Build through the existing NSIS configuration using a separate local tool cache. */
 export async function buildWindows(args = process.argv.slice(2)) {
   if (process.platform !== 'win32') throw new Error('Run BUILD_WINDOWS.cmd on Windows to build the Windows installer.');
+  await setupLatex();
   const version = desktopRequire('app-builder-lib/package.json').version;
   if (version !== '26.15.3') throw new Error(`Windows tool preparation expects electron-builder 26.15.3; installed ${version}. Restore desktop dependencies with npm ci.`);
   const cacheDir = path.join(project, '.tools', 'electron-builder-windows');

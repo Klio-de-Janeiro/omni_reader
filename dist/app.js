@@ -53,7 +53,7 @@ function shellShortcut(command){
   if(command==='toggle-edit')void toggleEditing();
   else if(command==='highlight')void highlightSelection();
   else if(command==='shortcut-settings')shortcutSettings.open();
-  else if(command==='save'){if(editing)void saveEditedCopy(editor);else $('download').click();}
+  else if(command==='save'){if(editing)void saveCurrentEditor();else $('download').click();}
   else if(command==='focus')setFocus(!focusMode);
   else if(command==='theme')themes.cycle();
   else if(command==='escape'){if(!$('highlight-panel').hidden)$('highlight-panel').hidden=true;else if(focusMode)setFocus(false);else void closeViewer();}
@@ -153,7 +153,7 @@ async function importFiles(input, { local = false } = {}) {
       const ext = validateFile(file);
       await validateBlob(file, ext);
       if (files.size >= 30) throw new Error('Открыто 30 файлов. Уберите ненужный из списка.');
-      const record = { id: Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join(""), name: file.name, size: file.size, ext, blob: file, nativeUrl: file.omniNativeUrl, saved: false, opened: Date.now(), images: file.omniImages || {}, imageSource: file.omniImageSource };
+      const record = { id: Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join(""), name: file.name, size: file.size, ext, blob: file, nativeUrl: file.omniNativeUrl, saved: false, opened: Date.now(), images: file.omniImages || {}, imageSource: file.omniImageSource, fileHandle: file.omniFileHandle };
       if ($('remember').checked) {
         try { await saveFile(record); record.saved = true; }
         catch (error) { errors.push(`${file.name}: не сохранён. ${error.name === 'QuotaExceededError' ? 'Недостаточно места в хранилище приложения.' : error.message}`); }
@@ -195,7 +195,7 @@ async function selectFile(id, leaveChecked = false, initialMode='scroll', positi
   $('reader-name').textContent = record.name;
   $('reader-meta').textContent = `${record.ext.toUpperCase()} · ${formatSize(record.size)} · ${record.saved ? 'Копия на устройстве' : 'Только в этом сеансе'}`;
   $('reader-type').textContent = label(record.ext); $('reader-type').className = `format-icon ${record.ext}`;
-  $('edit-file').hidden=['tex','doc','ogg'].includes(record.ext);
+  $('edit-file').hidden=['doc','ogg'].includes(record.ext);
   const office = record.ext === 'docx' || record.ext === 'pptx';
   $('view-mode-control').hidden=!['pdf','docx','pptx'].includes(record.ext);
   $('office-note').hidden = !office; $('pagination').hidden = true;
@@ -207,6 +207,9 @@ async function selectFile(id, leaveChecked = false, initialMode='scroll', positi
   $('viewer').innerHTML = '<div class="loading"><span class="spinner"></span><span>Открываем файл…</span></div>';
   $('viewer').setAttribute('aria-busy', 'true'); syncControls(); renderList();
   try {
+    if (record.ext === 'tex' && autoFocus && record.blob.size <= 8 * 1024 * 1024) {
+      await $('edit-file').onclick(); return;
+    }
     const next = await openViewer(record.blob, $('viewer'), { ext: record.ext, signal: current.signal, viewMode, imageRecord: record, onShellShortcut:shellShortcut,
       onPage: value => {if(!current.signal.aborted){page=value;syncControls();}},
       onZoom: value => {if(!current.signal.aborted){zoom=value;syncControls();}},
@@ -232,7 +235,7 @@ async function selectFile(id, leaveChecked = false, initialMode='scroll', positi
 }
 function syncFocusControls() {
   conversion.sync();
-  const ext=files.get(active)?.ext,image=['png','jpg','jpeg'].includes(ext),editable=!!ext && !['tex','doc','ogg'].includes(ext);
+  const ext=files.get(active)?.ext,image=['png','jpg','jpeg'].includes(ext),editable=!!ext && !['doc','ogg'].includes(ext);
   const canMark=reading() && ['pdf','docx','pptx','xlsx','csv','md','tex',...sourceFormats].includes(ext);
   $('focus-actions').hidden=!focusMode;
   const markdownImages = ['md','tex','ipynb'].includes(ext);
@@ -244,6 +247,7 @@ function syncFocusControls() {
   $('focus-edit').setAttribute('aria-pressed',String(editing && !!editor?.sourceMode));
   $('focus-save').hidden=!focusMode || !editable || !editing;
   $('focus-save').disabled=!editor || editor.busy || !editor.dirty;
+  $('focus-save').textContent=ext==='tex'?'Сохранить .tex':'Сохранить копию';
   $('focus-highlight').hidden=!focusMode || !canMark;$('highlight-button').hidden=!canMark;
   $('focus-highlight').disabled=$('highlight-button').disabled=preparingEditor || changingViewMode || importing || !!editor?.busy;
   if(!reading())$('highlight-panel').hidden=true;
@@ -399,6 +403,12 @@ async function canLeaveEditor() {
   });
 }
 /** Commit to a new app record before asking the OS where to export that copy. */
+async function saveCurrentEditor() {
+  try {
+    if (files.get(active)?.ext === 'tex' && editor?.save) return await editor.save();
+    return await saveEditedCopy(editor);
+  } catch (error) { notify(error.message || 'Не удалось сохранить исходник.', true); }
+}
 async function saveEditedCopy(session) {
   if (!session || session !== editor) return;
   session.setBusy(true);
@@ -420,9 +430,9 @@ async function saveEditedCopy(session) {
   } catch (error) { session.setBusy(false);syncFocusControls();notify(error.message || 'Не удалось сохранить копию.', true); }
 }
 $('focus-edit').onclick=()=>{if(editing && editor?.sourceMode && editor?.toggleTools)editor.toggleTools();else return toggleEditing();};
-$('focus-save').onclick=()=>void saveEditedCopy(editor);
+$('focus-save').onclick=()=>void saveCurrentEditor();
 $('edit-file').onclick = async () => {
-  if (editing || preparingEditor || changingViewMode || !active || ['tex','doc','ogg'].includes(files.get(active)?.ext)) return;
+  if (editing || preparingEditor || changingViewMode || !active || ['doc','ogg'].includes(files.get(active)?.ext)) return;
   const record = files.get(active), initialPage=page, initialZoom=zoom; resetViewer(); editing = true; preparingEditor = true;
   const current = controller;
   $('pagination').hidden = true; $('zoom-controls').hidden = true; $('text-tools').hidden = true; $('office-note').hidden = true; $('rotate').hidden = true; $('edit-file').hidden = true;
@@ -432,10 +442,21 @@ $('edit-file').onclick = async () => {
   syncControls();
   try {
     const { openEditor } = await import('./editors/ui.js');
-    const next = await openEditor(record, $('viewer'), { signal: current.signal, viewMode,getViewMode:()=>viewMode,initialPage,initialZoom,onShellShortcut:shellShortcut,onViewMode:value=>{viewMode=value;}, onDirty:()=>syncFocusControls(), onSave: saveEditedCopy, onClose: () => selectFile(record.id,false,viewMode,editor?.position,false), onError: error => notify(error.message, true) });
+    const next = await openEditor(record, $('viewer'), { signal: current.signal, viewMode,getViewMode:()=>viewMode,initialPage,initialZoom,onShellShortcut:shellShortcut,onViewMode:value=>{viewMode=value;}, onDirty:()=>syncFocusControls(), onSave: saveEditedCopy,
+      onSaved: async (savedRecord, blob) => {
+        if (files.get(savedRecord.id) !== savedRecord) return;
+        savedRecord.blob = blob; savedRecord.size = blob.size;
+        if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+        downloadUrl = URL.createObjectURL(blob); $('download').href = downloadUrl;
+        $('reader-meta').textContent = `${savedRecord.ext.toUpperCase()} · ${formatSize(blob.size)} · Сохранён`;
+        renderList();
+        if (savedRecord.saved || $('remember').checked) {
+          try { await saveFile(savedRecord); savedRecord.saved = true; } catch (error) { notify('Исходник сохранён; не удалось обновить локальную копию: ' + error.message, true); }
+        }
+      }, onClose: () => selectFile(record.id,false,viewMode,editor?.position,false), onError: error => notify(error.message, true) });
     if(current.signal.aborted){next.dispose();return;}editor=next;
     preparingEditor = false; $('viewer').setAttribute('aria-busy', 'false');syncControls();
-  } catch (error) { preparingEditor = false; await selectFile(record.id, true); notify(error.message || 'Редактор пока не поддерживает этот файл.', true); }
+  } catch (error) { preparingEditor = false; await selectFile(record.id, true, viewMode, {}, false); notify(error.message || 'Редактор пока не поддерживает этот файл.', true); }
 };
 addEventListener('beforeunload', event => {
   if (editor?.dirty || editor?.busy) { event.preventDefault(); event.returnValue = ''; }

@@ -15,6 +15,7 @@ import { TEXT_EXTENSIONS } from '../validation.js';
 import { openImageUI } from './image-ui.js';
 import { editingShortcut } from '../shortcuts.js';
 import { withReadMode } from './read-mode.js';
+import { openLatexEditor } from '../latex-editor.js';
 
 const node = (tag, text, cls) => { const el = document.createElement(tag); if (text != null) el.textContent = text; if (cls) el.className = cls; return el; };
 const button = text => { const el = node('button', text); el.type = 'button'; return el; };
@@ -22,7 +23,8 @@ const field = (title, control) => { const label = node('label', title); control.
 const input = (title, type = 'text') => { const el = node('input'); el.type = type; el.setAttribute('aria-label', title); return el; };
 
 /** Mount one editor and expose an explicit export, dirty state and disposal contract. */
-async function openEditorUI(record, root, { onSave, onClose, onError, onDirty, signal, viewMode, onViewMode, onShellShortcut, initialPage = 1, initialZoom = 1 }) {
+async function openEditorUI(record, root, { onSave, onClose, onError, onDirty, onSaved, signal, viewMode, onViewMode, onShellShortcut, initialPage = 1, initialZoom = 1 }) {
+  if (record.ext === 'tex') return openLatexEditor(record, root, { onSave, onClose, onError, onDirty, onSaved, signal, initialZoom });
   const largeContext={onSave,onClose,onError,onDirty,signal};
   if(record.blob.size>LARGE_TEXT_BYTES){
     if(record.ext==='csv')return openLargeCsv(record.blob,root,largeContext,true);

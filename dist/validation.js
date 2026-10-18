@@ -13,7 +13,7 @@ export function getExtension(name) {
 /** Check file limits before allocating the input buffer. */
 export function validateFile(file) {
   const ext = getExtension(file.name);
-  if (!file.size && !TEXT_EXTENSIONS.includes(ext)) throw new Error('Файл пустой. Выберите другой файл.');
+  if (!file.size && !TEXT_EXTENSIONS.includes(ext) && ext !== 'tex') throw new Error('Файл пустой. Выберите другой файл.');
   if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size >= MAX_FILE_BYTES) throw new Error('Размер файла должен быть меньше 500 МБ.');
   return ext;
 }

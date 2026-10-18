@@ -42,7 +42,9 @@
       "package.json",
       "www/**/*",
       "speech-session.cjs",
-      "!www/recorder*"
+      "!www/recorder*",
+      "latex.cjs",
+      "latex-files.cjs"
     ],
     "extraResources": [
       {
@@ -50,6 +52,15 @@
         "to": "speech",
         "filter": [
           "transcribe.py"
+        ]
+      },
+      {
+        "from": "latex-runtime",
+        "to": "latex-runtime",
+        "filter": [
+          "tectonic.exe",
+          "TECTONIC-LICENSE.txt",
+          "TECTONIC-SOURCE.json"
         ]
       }
     ],
